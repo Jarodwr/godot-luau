@@ -51,5 +51,5 @@ at the same optimisation level.
 | [0025](0025-vector-and-string-methods.md) | Methods on vectors and on Lua strings | Accepted |
 | [0026](0026-utilities-and-enums-as-data.md) | Utility functions, global enums and class constants from generated data | Accepted |
 | [0027](0027-iteration-and-table-conversion.md) | Iterating Godot collections; Lua tables become Array or Dictionary | Accepted |
-| [0028](0028-validated-operators-for-plain-types.md) | Validated operators for plain builtin types | Proposed |
-| [0029](0029-builtin-method-pointers.md) | Cached method pointers for builtin values | Proposed |
+| [0028](0028-validated-operators-for-plain-types.md) | Validated operators for plain builtin types | Accepted |
+| [0029](0029-builtin-method-pointers.md) | Cached method pointers for builtin values | Accepted |

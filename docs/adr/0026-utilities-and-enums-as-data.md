@@ -30,6 +30,8 @@ a utility function needs its hash, from `extension_api.json`.
   against GDScript's 6.8).
 - The six utilities taking or returning packed arrays or `RID`
   (`var_to_bytes`, `rand_from_seed`…) raise "invalid arguments" for now.
-- Utilities typed `Variant` (`lerp`, `clamp`) build Variants per argument
-  (`api_utility_fn`: 37 ns vs 9). The float/int versions (`lerpf`, `clampf`)
-  are cheaper.
+- Utilities whose arguments and result are numbers, booleans or plain
+  Variants take a direct path with flat stack storage (`api_utility_fn`:
+  29 ns vs GDScript's 28). The first version of the benchmark compared
+  against 9 ns because GDScript folded `lerp(0.0, 10.0, 0.5)` at compile
+  time; it now uses a varying weight.

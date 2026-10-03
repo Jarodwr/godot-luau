@@ -43,5 +43,11 @@ Scripts expect Godot's methods on both: `v:length()`, `v:rotated(a)`,
   calls (`api_transform3d_xform`: 46 ns vs GDScript's 11). Typed engine
   arguments never retry. The underlying ambiguity is still open
   (`todo/vector2-vector3-ambiguity.md`).
-- Godot string methods convert the Lua string to a `String` on every call
-  (`api_string_godot_method`: 75 ns vs 14).
+- The most used Godot string methods run directly on UTF-8:
+  - `begins_with`, `ends_with`, `contains`, `is_empty`, `strip_edges`,
+    `replace`;
+  - `to_upper`/`to_lower` for ASCII text (other text goes to the engine).
+
+  These match GDScript (`api_string_godot_method`: 12.7 ns vs 13.8). Others
+  convert the Lua string to a `String` per call. `demo/checks.gd` compares
+  their results with Godot's on ASCII, non-ASCII, padded and empty strings.
