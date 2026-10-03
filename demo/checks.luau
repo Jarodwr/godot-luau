@@ -8,4 +8,8 @@ function Checks:frames() return Engine:get_physics_ticks_per_second() end
 function Checks:keep_self_of(other) self.other = other end
 function Checks:use_other() return self.other.name end
 
+function Checks:dict_write(d) d["x"] = 5; d[1] = "y"; return d["x"] end
+function Checks:array_write(a) a[0] = 10; return a[0] + a[1] end
+function Checks:array_oob(a) return a[99] end
+
 return Checks

@@ -38,6 +38,13 @@ func _initialize() -> void:
 	b.free()
 	check(a.use_other() == null, "freed scripted node raises an error (call returns null)")
 
+	# Indexed and keyed access (ADR 0020)
+	var d := {}
+	check(a.dict_write(d) == 5 and d["x"] == 5 and d[1] == "y", "Dictionary writes and reads by key")
+	var arr := [1, 2]
+	check(a.array_write(arr) == 12 and arr[0] == 10, "Array writes and reads by index")
+	check(a.array_oob(arr) == null, "Array index out of range reads as nil")
+
 	a.free()
 	print("failures: ", failures)
 	quit(failures)

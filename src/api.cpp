@@ -1018,12 +1018,78 @@ static void push_variant_userdata(lua_State *L, const Variant &value) {
 	new (box) Variant(value);
 }
 
+static bool variant_bytes_ok = false;
+
+// The type of a Variant, from its bytes when the layout check passed
+static Variant::Type type_of(const Variant &value) {
+	return variant_bytes_ok ? (Variant::Type)*reinterpret_cast<const int32_t *>(value._native_ptr()) : value.get_type();
+}
+
+static bool is_indexed_type(Variant::Type type) {
+	return type == Variant::ARRAY || (type >= Variant::PACKED_BYTE_ARRAY && type < Variant::VARIANT_MAX);
+}
+
+// Arrays (and packed arrays) by integer index, dictionaries by key, through
+// the interface's indexed/keyed accessors (docs/adr/0020). A missing key or
+// an index out of range reads as nil.
 static int variant_index(lua_State *L) {
 	Variant *self = (Variant *)lua_touserdatatagged(L, 1, TAG_VARIANT);
+	Variant::Type type = type_of(*self);
+	if (lua_type(L, 2) == LUA_TNUMBER && is_indexed_type(type)) {
+		GDExtensionBool valid, oob;
+		VariantResult result;
+		gdextension_interface::variant_get_indexed(self->_native_ptr(), (GDExtensionInt)lua_tonumber(L, 2), result.uninitialized(), &valid, &oob);
+		if (valid && !oob) {
+			push_variant(L, result.get());
+		} else {
+			lua_pushnil(L);
+		}
+		return 1;
+	}
+	if (type == Variant::DICTIONARY) {
+		GDExtensionBool valid;
+		VariantResult result;
+		{
+			VariantArgs key;
+			key.add(L, 2);
+			gdextension_interface::variant_get_keyed(self->_native_ptr(), key.argv[0]->_native_ptr(), result.uninitialized(), &valid);
+		}
+		if (valid) {
+			push_variant(L, result.get());
+		} else {
+			lua_pushnil(L);
+		}
+		return 1;
+	}
 	bool valid = false;
 	Variant result = self->get(to_variant(L, 2), &valid);
 	push_variant(L, result);
 	return 1;
+}
+
+static int variant_newindex(lua_State *L) {
+	Variant *self = (Variant *)lua_touserdatatagged(L, 1, TAG_VARIANT);
+	Variant::Type type = type_of(*self);
+	GDExtensionBool valid = false;
+	{
+		VariantArgs args;
+		args.add(L, 3);
+		if (lua_type(L, 2) == LUA_TNUMBER && is_indexed_type(type)) {
+			GDExtensionBool oob;
+			gdextension_interface::variant_set_indexed(self->_native_ptr(), (GDExtensionInt)lua_tonumber(L, 2), args.argv[0]->_native_ptr(), &valid, &oob);
+			valid = valid && !oob;
+		} else if (type == Variant::DICTIONARY) {
+			args.add(L, 2);
+			gdextension_interface::variant_set_keyed(self->_native_ptr(), args.argv[1]->_native_ptr(), args.argv[0]->_native_ptr(), &valid);
+		} else {
+			args.add(L, 2);
+			gdextension_interface::variant_set(self->_native_ptr(), args.argv[1]->_native_ptr(), args.argv[0]->_native_ptr(), &valid);
+		}
+	}
+	if (!valid) {
+		luaL_error(L, "invalid assignment to a %s value", lua_typename(L, lua_type(L, 1)));
+	}
+	return 0;
 }
 
 static int variant_namecall(lua_State *L) {
@@ -1088,7 +1154,7 @@ static int variant_tostring(lua_State *L) {
 // Godot's Variant is { int32 type; padding; union data } with the data at
 // offset 8. Checked once at startup; if it doesn't hold, the engine calls are
 // used instead.
-static bool variant_bytes_ok = false;
+// (declared above, near type_of)
 constexpr size_t VARIANT_DATA = 8;
 
 static void check_variant_layout() {
@@ -1384,6 +1450,8 @@ void register_globals(lua_State *L) {
 	lua_newtable(L);
 	lua_pushcfunction(L, variant_index, "__index");
 	lua_setfield(L, -2, "__index");
+	lua_pushcfunction(L, variant_newindex, "__newindex");
+	lua_setfield(L, -2, "__newindex");
 	lua_pushcfunction(L, variant_namecall, "__namecall");
 	lua_setfield(L, -2, "__namecall");
 	lua_pushcfunction(L, variant_operator<Variant::OP_ADD>, "__add");
