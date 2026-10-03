@@ -1,0 +1,13 @@
+{
+  "_comment": "godot-cpp builds wrappers only for these classes (and their parents). Engine classes used from Luau scripts are bound dynamically and need nothing here.",
+  "enabled_classes": [
+    "Engine",
+    "OS",
+    "ProjectSettings",
+    "ResourceLoader",
+    "ResourceFormatLoader",
+    "ResourceFormatSaver",
+    "ScriptLanguageExtension",
+    "ScriptExtension"
+  ]
+}

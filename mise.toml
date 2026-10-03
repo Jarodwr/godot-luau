@@ -1,0 +1,4 @@
+[tools]
+cmake = "latest"
+ninja = "latest"
+python = "3"      # godot-cpp's binding generator

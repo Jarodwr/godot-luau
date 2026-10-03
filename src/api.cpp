@@ -1,0 +1,956 @@
+#include "api.h"
+
+#include "script.h"
+
+#include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/godot.hpp>
+#include <godot_cpp/templates/hash_map.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
+#include <godot_cpp/variant/vector2.hpp>
+#include <godot_cpp/variant/vector3.hpp>
+#include <godot_cpp/classes/file_access.hpp>
+#include <luacode.h>
+#include <lualib.h>
+
+#include <cstring>
+#include <new>
+
+using namespace godot;
+
+namespace luau {
+
+// ---------------------------------------------------------------- state
+
+static lua_State *L_main = nullptr;
+
+lua_State *state() {
+	return L_main;
+}
+
+// ---------------------------------------------------------------- atoms
+
+static std::vector<StringName> atoms;
+constexpr size_t MAX_ATOM_LENGTH = 64;
+constexpr size_t MAX_ATOMS = 32000;
+
+static int16_t user_atom(lua_State *, const char *s, size_t length) {
+	if (length > MAX_ATOM_LENGTH || atoms.size() >= MAX_ATOMS) {
+		return -1;
+	}
+	atoms.push_back(StringName(String::utf8(s, (int)length)));
+	return (int16_t)(atoms.size() - 1);
+}
+
+const StringName &atom_name(int atom) {
+	return atoms[atom];
+}
+
+int string_atom(lua_State *L, int index) {
+	int atom = -1;
+	if (lua_tostringatom(L, index, &atom) == nullptr) {
+		return -1;
+	}
+	return atom;
+}
+
+// The StringName of the string at `index`: by atom when it has one
+static StringName string_name_at(lua_State *L, int index) {
+	int atom = string_atom(L, index);
+	if (atom >= 0) {
+		return atoms[atom];
+	}
+	size_t length;
+	const char *s = lua_tolstring(L, index, &length);
+	return StringName(String::utf8(s, (int)length));
+}
+
+// ---------------------------------------------------------------- method table
+
+static const MethodInfo METHODS[] = {
+#include "api_data.inc"
+};
+static const size_t METHOD_COUNT = sizeof(METHODS) / sizeof(METHODS[0]);
+
+static const MethodInfo *find_method_info(const char *class_name, const char *method) {
+	size_t lo = 0, hi = METHOD_COUNT;
+	while (lo < hi) {
+		size_t mid = (lo + hi) / 2;
+		int c = strcmp(METHODS[mid].class_name, class_name);
+		if (c == 0) {
+			c = strcmp(METHODS[mid].method, method);
+		}
+		if (c == 0) {
+			return &METHODS[mid];
+		}
+		if (c < 0) {
+			lo = mid + 1;
+		} else {
+			hi = mid;
+		}
+	}
+	return nullptr;
+}
+
+static bool native_arg(ArgType t) {
+	return t != T_OTHER && t != T_VOID;
+}
+
+static bool native_ret(ArgType t) {
+	switch (t) {
+		case T_VOID: case T_BOOL: case T_INT: case T_FLOAT: case T_STRING:
+		case T_STRING_NAME: case T_VECTOR2: case T_VECTOR3: case T_VARIANT:
+			return true;
+		default:
+			return false;  // objects (refcounts), integer vectors, Rect2, Color… use call
+	}
+}
+
+// `method` as declared by `class_name` or its nearest ancestor
+static Method resolve_method(StringName class_name, const StringName &method) {
+	Method result;
+	CharString method_utf8 = String(method).utf8();
+	while (!class_name.is_empty()) {
+		CharString class_utf8 = String(class_name).utf8();
+		if (const MethodInfo *info = find_method_info(class_utf8.get_data(), method_utf8.get_data())) {
+			result.info = info;
+			result.bind = gdextension_interface::classdb_get_method_bind(class_name._native_ptr(), method._native_ptr(), info->hash);
+			result.ptrcall = result.bind && !(info->flags & (F_VARARG | F_OTHER)) && native_ret(info->ret);
+			for (int i = 0; result.ptrcall && i < info->argc; i++) {
+				result.ptrcall = native_arg(info->args[i]);
+			}
+			return result;
+		}
+		class_name = ClassDB::get_parent_class(class_name);
+	}
+	return result;
+}
+
+// ---------------------------------------------------------------- classes
+
+static HashMap<StringName, ClassInfo *> class_infos;
+
+ClassInfo *class_info(const StringName &class_name) {
+	if (ClassInfo **info = class_infos.getptr(class_name)) {
+		return *info;
+	}
+	ClassInfo *info = new ClassInfo();
+	info->name = class_name;
+	class_infos.insert(class_name, info);
+	return info;
+}
+
+ClassInfo *class_info_of(GDExtensionObjectPtr object) {
+	StringName class_name;
+	gdextension_interface::object_get_class_name(object, gdextension_interface::library, class_name._native_ptr());
+	return class_info(class_name);
+}
+
+void clear_class_infos() {
+	for (auto &[name, info] : class_infos) {
+		for (Member *member : info->by_atom) {
+			delete member;
+		}
+		for (auto &[n, member] : info->by_name) {
+			delete member;
+		}
+		delete info;
+	}
+	class_infos.clear();
+	atoms.clear();
+}
+
+static Member *resolve_member(const StringName &class_name, const StringName &name) {
+	Member *member = new Member();
+	member->name = name;
+	if (ClassDB::class_has_method(class_name, name)) {
+		member->kind = MemberKind::METHOD;
+		member->method = resolve_method(class_name, name);
+	} else if (StringName getter = ClassDB::class_get_property_getter(class_name, name); !getter.is_empty()) {
+		member->kind = MemberKind::PROPERTY;
+		Method get = resolve_method(class_name, getter);
+		if (get.info && get.info->argc == 0) {
+			member->getter = get;  // indexed properties keep Object.get
+		}
+		StringName setter = ClassDB::class_get_property_setter(class_name, name);
+		if (!setter.is_empty()) {
+			Method set = resolve_method(class_name, setter);
+			if (set.info && set.info->argc == 1) {
+				member->setter = set;
+			}
+		}
+	}
+	return member;
+}
+
+const Member &ClassInfo::member(int atom) {
+	if (atom < 0) {
+		static Member unknown;
+		return unknown;
+	}
+	if ((size_t)atom >= by_atom.size()) {
+		by_atom.resize(atom + 1, nullptr);
+	}
+	if (by_atom[atom] == nullptr) {
+		by_atom[atom] = resolve_member(name, atoms[atom]);
+	}
+	return *by_atom[atom];
+}
+
+const Member &ClassInfo::member(const StringName &member_name) {
+	if (Member **member = by_name.getptr(member_name)) {
+		return **member;
+	}
+	return *by_name.insert(member_name, resolve_member(name, member_name))->value;
+}
+
+// ---------------------------------------------------------------- calls
+
+// One argument or result in its native ptrcall layout
+struct NativeSlot {
+	alignas(16) unsigned char bytes[sizeof(Variant)];
+	ArgType constructed = T_VOID;  // which object to destroy, if any
+
+	~NativeSlot() {
+		switch (constructed) {
+			case T_STRING: reinterpret_cast<String *>(bytes)->~String(); break;
+			case T_STRING_NAME: reinterpret_cast<StringName *>(bytes)->~StringName(); break;
+			case T_VARIANT: reinterpret_cast<Variant *>(bytes)->~Variant(); break;
+			default: break;
+		}
+	}
+};
+
+// Writes the Luau value at `index` as `type`; false if it doesn't fit
+static bool to_native(lua_State *L, int index, ArgType type, NativeSlot &slot) {
+	switch (type) {
+		case T_BOOL:
+			*reinterpret_cast<GDExtensionBool *>(slot.bytes) = lua_toboolean(L, index);
+			return true;
+		case T_INT:
+			if (lua_type(L, index) != LUA_TNUMBER) return false;
+			*reinterpret_cast<int64_t *>(slot.bytes) = (int64_t)lua_tonumber(L, index);
+			return true;
+		case T_FLOAT:
+			if (lua_type(L, index) != LUA_TNUMBER) return false;
+			*reinterpret_cast<double *>(slot.bytes) = lua_tonumber(L, index);
+			return true;
+		case T_STRING: {
+			if (lua_type(L, index) != LUA_TSTRING) return false;
+			size_t length;
+			const char *s = lua_tolstring(L, index, &length);
+			new (slot.bytes) String(String::utf8(s, (int)length));
+			slot.constructed = T_STRING;
+			return true;
+		}
+		case T_STRING_NAME:
+			if (lua_type(L, index) != LUA_TSTRING) return false;
+			new (slot.bytes) StringName(string_name_at(L, index));
+			slot.constructed = T_STRING_NAME;
+			return true;
+		case T_VECTOR2:
+		case T_VECTOR3:
+		case T_VECTOR2I:
+		case T_VECTOR3I: {
+			const float *v = lua_tovector(L, index);
+			if (v == nullptr) return false;
+			int n = (type == T_VECTOR2 || type == T_VECTOR2I) ? 2 : 3;
+			for (int i = 0; i < n; i++) {
+				if (type == T_VECTOR2 || type == T_VECTOR3) {
+					reinterpret_cast<float *>(slot.bytes)[i] = v[i];
+				} else {
+					reinterpret_cast<int32_t *>(slot.bytes)[i] = (int32_t)v[i];
+				}
+			}
+			return true;
+		}
+		case T_OBJECT: {
+			GDExtensionObjectPtr object = lua_isnil(L, index) ? nullptr : to_object(L, index);
+			if (object == nullptr && !lua_isnil(L, index)) return false;
+			*reinterpret_cast<GDExtensionObjectPtr *>(slot.bytes) = object;
+			return true;
+		}
+		case T_VARIANT:
+			new (slot.bytes) Variant(to_variant(L, index));
+			slot.constructed = T_VARIANT;
+			return true;
+		default: {
+			// Rect2, Color…: from a Variant userdata of that exact type
+			Variant value = to_variant(L, index);
+			Variant::Type want = type == T_RECT2 ? Variant::RECT2 : Variant::COLOR;
+			if (value.get_type() != want) return false;
+			GDExtensionTypeFromVariantConstructorFunc from = gdextension_interface::get_variant_to_type_constructor((GDExtensionVariantType)want);
+			from(slot.bytes, value._native_ptr());
+			return true;
+		}
+	}
+}
+
+static void prepare_return(ArgType type, NativeSlot &slot) {
+	switch (type) {
+		case T_STRING: new (slot.bytes) String(); slot.constructed = T_STRING; break;
+		case T_STRING_NAME: new (slot.bytes) StringName(); slot.constructed = T_STRING_NAME; break;
+		case T_VARIANT: new (slot.bytes) Variant(); slot.constructed = T_VARIANT; break;
+		default: break;
+	}
+}
+
+static void push_string(lua_State *L, const String &s) {
+	CharString utf8 = s.utf8();
+	lua_pushlstring(L, utf8.get_data(), utf8.length());
+}
+
+static void push_native(lua_State *L, ArgType type, NativeSlot &slot) {
+	switch (type) {
+		case T_VOID: lua_pushnil(L); break;
+		case T_BOOL: lua_pushboolean(L, *reinterpret_cast<GDExtensionBool *>(slot.bytes)); break;
+		case T_INT: lua_pushnumber(L, (double)*reinterpret_cast<int64_t *>(slot.bytes)); break;
+		case T_FLOAT: lua_pushnumber(L, *reinterpret_cast<double *>(slot.bytes)); break;
+		case T_STRING: push_string(L, *reinterpret_cast<String *>(slot.bytes)); break;
+		case T_STRING_NAME: push_string(L, String(*reinterpret_cast<StringName *>(slot.bytes))); break;
+		case T_VECTOR2: {
+			const float *v = reinterpret_cast<float *>(slot.bytes);
+			lua_pushvector(L, v[0], v[1], 0.0f);
+			break;
+		}
+		case T_VECTOR3: {
+			const float *v = reinterpret_cast<float *>(slot.bytes);
+			lua_pushvector(L, v[0], v[1], v[2]);
+			break;
+		}
+		case T_VARIANT: push_variant(L, *reinterpret_cast<Variant *>(slot.bytes)); break;
+		default: lua_pushnil(L); break;
+	}
+}
+
+static void push_call_error(lua_State *L, const Method &method, const GDExtensionCallError &error) {
+	lua_pushfstring(L, "error %d calling %s.%s (argument %d)", (int)error.error,
+			method.info ? method.info->class_name : "?", method.info ? method.info->method : "?", (int)error.argument);
+}
+
+// Through Variants, for anything ptrcall doesn't handle (varargs, defaults,
+// object returns, unusual types)
+static bool call_variant(lua_State *L, GDExtensionObjectPtr object, GDExtensionMethodBindPtr bind, const Method &method, int first, int argc) {
+	constexpr int MAX = 16;
+	if (argc > MAX) {
+		lua_pushstring(L, "too many arguments");
+		return false;
+	}
+	Variant args[MAX];
+	const Variant *argv[MAX];
+	for (int i = 0; i < argc; i++) {
+		args[i] = to_variant(L, first + i);
+		argv[i] = &args[i];
+	}
+	Variant result;
+	GDExtensionCallError error;
+	gdextension_interface::object_method_bind_call(bind, object, (const GDExtensionConstVariantPtr *)argv, argc, result._native_ptr(), &error);
+	if (error.error != GDEXTENSION_CALL_OK) {
+		push_call_error(L, method, error);
+		return false;
+	}
+	push_variant(L, result);
+	return true;
+}
+
+bool call_method(lua_State *L, GDExtensionObjectPtr object, const Method &method, int first, int argc) {
+	if (method.bind == nullptr) {
+		lua_pushstring(L, "method has no bind");
+		return false;
+	}
+	const MethodInfo *info = method.info;
+	if (method.ptrcall && argc == info->argc) {
+		NativeSlot slots[MAX_FAST_ARGS];
+		GDExtensionConstTypePtr argv[MAX_FAST_ARGS];
+		bool ok = true;
+		for (int i = 0; i < argc && ok; i++) {
+			ok = to_native(L, first + i, info->args[i], slots[i]);
+			argv[i] = slots[i].bytes;
+		}
+		if (ok) {
+			NativeSlot ret;
+			prepare_return(info->ret, ret);
+			gdextension_interface::object_method_bind_ptrcall(method.bind, object, argv, ret.bytes);
+			push_native(L, info->ret, ret);
+			return true;
+		}
+		// A value didn't fit the declared type: let the engine convert or report
+	}
+	return call_variant(L, object, method.bind, method, first, argc);
+}
+
+// Object.get / Object.set / Object.call through their binds
+static const Method &object_method(const char *name) {
+	static HashMap<String, Method> methods;
+	if (Method *m = methods.getptr(name)) {
+		return *m;
+	}
+	return methods.insert(name, resolve_method(StringName("Object"), StringName(name)))->value;
+}
+
+void push_object_get(lua_State *L, GDExtensionObjectPtr object, const StringName &name) {
+	Variant key = name;
+	const Variant *argv[] = { &key };
+	Variant result;
+	GDExtensionCallError error;
+	gdextension_interface::object_method_bind_call(object_method("get").bind, object, (const GDExtensionConstVariantPtr *)argv, 1, result._native_ptr(), &error);
+	push_variant(L, result);
+}
+
+static void generic_set(lua_State *L, GDExtensionObjectPtr object, const StringName &name, int index) {
+	Variant key = name;
+	Variant value = to_variant(L, index);
+	const Variant *argv[] = { &key, &value };
+	Variant result;
+	GDExtensionCallError error;
+	gdextension_interface::object_method_bind_call(object_method("set").bind, object, (const GDExtensionConstVariantPtr *)argv, 2, result._native_ptr(), &error);
+}
+
+// Object.call(name, args...): script methods and anything not in the table
+static bool generic_call(lua_State *L, GDExtensionObjectPtr object, const StringName &name, int first, int argc) {
+	constexpr int MAX = 16;
+	if (argc + 1 > MAX) {
+		lua_pushstring(L, "too many arguments");
+		return false;
+	}
+	Variant args[MAX];
+	const Variant *argv[MAX];
+	args[0] = name;
+	argv[0] = &args[0];
+	for (int i = 0; i < argc; i++) {
+		args[i + 1] = to_variant(L, first + i);
+		argv[i + 1] = &args[i + 1];
+	}
+	const Method &call = object_method("call");
+	Variant result;
+	GDExtensionCallError error;
+	gdextension_interface::object_method_bind_call(call.bind, object, (const GDExtensionConstVariantPtr *)argv, argc + 1, result._native_ptr(), &error);
+	if (error.error != GDEXTENSION_CALL_OK) {
+		CharString n = String(name).utf8();
+		lua_pushfstring(L, "error %d calling '%s'", (int)error.error, n.get_data());
+		return false;
+	}
+	push_variant(L, result);
+	return true;
+}
+
+bool get_property(lua_State *L, GDExtensionObjectPtr object, const Member &member) {
+	if (member.getter.bind) {
+		return call_method(L, object, member.getter, 0, 0);
+	}
+	push_object_get(L, object, member.name);
+	return true;
+}
+
+bool set_property(lua_State *L, GDExtensionObjectPtr object, const Member &member, int index) {
+	index = lua_absindex(L, index);
+	if (member.setter.bind) {
+		bool ok = call_method(L, object, member.setter, index, 1);
+		lua_pop(L, 1);
+		return ok;
+	}
+	generic_set(L, object, member.name, index);
+	return true;
+}
+
+// ---------------------------------------------------------------- objects
+
+struct ObjectBox {
+	Variant ref;  // keeps RefCounted objects alive
+	GDExtensionObjectPtr object;
+	uint64_t id;
+	ClassInfo *cls;
+};
+
+static GDExtensionObjectPtr checked_object(lua_State *L, int index) {
+	ObjectBox *box = (ObjectBox *)lua_touserdatatagged(L, index, TAG_OBJECT);
+	if (box == nullptr) {
+		return nullptr;
+	}
+	if (gdextension_interface::object_get_instance_from_id(box->id) != box->object) {
+		luaL_error(L, "attempt to use a freed object");
+	}
+	return box->object;
+}
+
+void push_object(lua_State *L, GDExtensionObjectPtr object) {
+	if (object == nullptr) {
+		lua_pushnil(L);
+		return;
+	}
+	if (push_self_table(L, object)) {
+		return;
+	}
+	ObjectBox *box = (ObjectBox *)lua_newuserdatataggedwithmetatable(L, sizeof(ObjectBox), TAG_OBJECT);
+	new (box) ObjectBox();
+	static GDExtensionVariantFromTypeConstructorFunc from_object = gdextension_interface::get_variant_from_type_constructor(GDEXTENSION_VARIANT_TYPE_OBJECT);
+	from_object(box->ref._native_ptr(), &object);
+	box->object = object;
+	box->id = gdextension_interface::object_get_instance_id(object);
+	box->cls = class_info_of(object);
+}
+
+GDExtensionObjectPtr to_object(lua_State *L, int index) {
+	switch (lua_type(L, index)) {
+		case LUA_TUSERDATA:
+			return checked_object(L, index);
+		case LUA_TTABLE:
+			return self_table_owner(L, index);
+		default:
+			return nullptr;
+	}
+}
+
+static int object_namecall(lua_State *L) {
+	int atom = -1;
+	const char *name = lua_namecallatom(L, &atom);
+	GDExtensionObjectPtr object = checked_object(L, 1);
+	ObjectBox *box = (ObjectBox *)lua_touserdatatagged(L, 1, TAG_OBJECT);
+	const Member &member = atom >= 0 ? box->cls->member(atom) : box->cls->member(StringName(name));
+	bool ok;
+	if (member.kind == MemberKind::METHOD && member.method.bind) {
+		ok = call_method(L, object, member.method, 2, lua_gettop(L) - 1);
+	} else {
+		ok = generic_call(L, object, atom >= 0 ? atom_name(atom) : StringName(name), 2, lua_gettop(L) - 1);
+	}
+	if (!ok) {
+		lua_error(L);
+	}
+	return 1;
+}
+
+// `obj.method` as a value: a function calling it on its first argument
+static int member_method_call(lua_State *L) {
+	const Member *member = (const Member *)lua_tolightuserdata(L, lua_upvalueindex(1));
+	GDExtensionObjectPtr object = to_object(L, 1);
+	if (object == nullptr) {
+		luaL_error(L, "call methods with ':'");
+	}
+	if (!call_method(L, object, member->method, 2, lua_gettop(L) - 1)) {
+		lua_error(L);
+	}
+	return 1;
+}
+
+void push_member_method(lua_State *L, const Member &member) {
+	lua_pushlightuserdata(L, (void *)&member);
+	lua_pushcclosurek(L, member_method_call, "engine method", 1, nullptr);
+}
+
+static int object_index(lua_State *L) {
+	GDExtensionObjectPtr object = checked_object(L, 1);
+	ObjectBox *box = (ObjectBox *)lua_touserdatatagged(L, 1, TAG_OBJECT);
+	int atom = string_atom(L, 2);
+	if (lua_type(L, 2) != LUA_TSTRING) {
+		lua_pushnil(L);
+		return 1;
+	}
+	const Member &member = atom >= 0 ? box->cls->member(atom) : box->cls->member(string_name_at(L, 2));
+	switch (member.kind) {
+		case MemberKind::PROPERTY:
+			if (!get_property(L, object, member)) lua_error(L);
+			return 1;
+		case MemberKind::METHOD:
+			push_member_method(L, member);
+			return 1;
+		default:
+			push_object_get(L, object, string_name_at(L, 2));
+			return 1;
+	}
+}
+
+static int object_newindex(lua_State *L) {
+	GDExtensionObjectPtr object = checked_object(L, 1);
+	ObjectBox *box = (ObjectBox *)lua_touserdatatagged(L, 1, TAG_OBJECT);
+	int atom = string_atom(L, 2);
+	const Member &member = atom >= 0 ? box->cls->member(atom) : box->cls->member(string_name_at(L, 2));
+	if (member.kind == MemberKind::PROPERTY) {
+		if (!set_property(L, object, member, 3)) lua_error(L);
+	} else {
+		generic_set(L, object, string_name_at(L, 2), 3);
+	}
+	return 0;
+}
+
+static int object_eq(lua_State *L) {
+	lua_pushboolean(L, to_object(L, 1) == to_object(L, 2));
+	return 1;
+}
+
+static int object_tostring(lua_State *L) {
+	ObjectBox *box = (ObjectBox *)lua_touserdatatagged(L, 1, TAG_OBJECT);
+	CharString name = String(box->cls->name).utf8();
+	lua_pushfstring(L, "<%s#%llu>", name.get_data(), (unsigned long long)box->id);
+	return 1;
+}
+
+// ---------------------------------------------------------------- other Variants
+
+static void push_variant_userdata(lua_State *L, const Variant &value) {
+	Variant *box = (Variant *)lua_newuserdatataggedwithmetatable(L, sizeof(Variant), TAG_VARIANT);
+	new (box) Variant(value);
+}
+
+static int variant_index(lua_State *L) {
+	Variant *self = (Variant *)lua_touserdatatagged(L, 1, TAG_VARIANT);
+	bool valid = false;
+	Variant result = self->get(to_variant(L, 2), &valid);
+	push_variant(L, result);
+	return 1;
+}
+
+static int variant_namecall(lua_State *L) {
+	Variant *self = (Variant *)lua_touserdatatagged(L, 1, TAG_VARIANT);
+	int atom = -1;
+	const char *name = lua_namecallatom(L, &atom);
+	StringName method = atom >= 0 ? atom_name(atom) : StringName(name);
+	int argc = lua_gettop(L) - 1;
+	constexpr int MAX = 16;
+	Variant args[MAX];
+	const Variant *argv[MAX];
+	for (int i = 0; i < argc && i < MAX; i++) {
+		args[i] = to_variant(L, 2 + i);
+		argv[i] = &args[i];
+	}
+	Variant result;
+	GDExtensionCallError error;
+	self->callp(method, argv, argc, result, error);
+	if (error.error != GDEXTENSION_CALL_OK) {
+		CharString n = String(method).utf8();
+		luaL_error(L, "error %d calling '%s'", (int)error.error, n.get_data());
+	}
+	push_variant(L, result);
+	return 1;
+}
+
+template <Variant::Operator OP>
+static int variant_operator(lua_State *L) {
+	Variant a = to_variant(L, 1);
+	Variant b = to_variant(L, 2);
+	Variant result;
+	bool valid;
+	Variant::evaluate(OP, a, b, result, valid);
+	if (!valid) {
+		luaL_error(L, "invalid operands");
+	}
+	push_variant(L, result);
+	return 1;
+}
+
+static int variant_tostring(lua_State *L) {
+	push_string(L, to_variant(L, 1).stringify());
+	return 1;
+}
+
+// ---------------------------------------------------------------- conversions
+
+void push_variant(lua_State *L, const Variant &value) {
+	switch (value.get_type()) {
+		case Variant::NIL: lua_pushnil(L); break;
+		case Variant::BOOL: lua_pushboolean(L, (bool)value); break;
+		case Variant::INT: lua_pushnumber(L, (double)(int64_t)value); break;
+		case Variant::FLOAT: lua_pushnumber(L, (double)value); break;
+		case Variant::STRING: push_string(L, value); break;
+		case Variant::STRING_NAME: push_string(L, String((StringName)value)); break;
+		case Variant::VECTOR2: {
+			Vector2 v = value;
+			lua_pushvector(L, v.x, v.y, 0.0f);
+			break;
+		}
+		case Variant::VECTOR3: {
+			Vector3 v = value;
+			lua_pushvector(L, v.x, v.y, v.z);
+			break;
+		}
+		case Variant::OBJECT: {
+			static GDExtensionTypeFromVariantConstructorFunc to_obj = gdextension_interface::get_variant_to_type_constructor(GDEXTENSION_VARIANT_TYPE_OBJECT);
+			GDExtensionObjectPtr object = nullptr;
+			to_obj(&object, (GDExtensionVariantPtr)value._native_ptr());
+			push_object(L, object);
+			break;
+		}
+		default:
+			push_variant_userdata(L, value);
+			break;
+	}
+}
+
+Variant to_variant(lua_State *L, int index) {
+	switch (lua_type(L, index)) {
+		case LUA_TBOOLEAN:
+			return (bool)lua_toboolean(L, index);
+		case LUA_TNUMBER: {
+			double d = lua_tonumber(L, index);
+			if (d == (double)(int64_t)d && d > -9007199254740992.0 && d < 9007199254740992.0) {
+				return (int64_t)d;
+			}
+			return d;
+		}
+		case LUA_TSTRING: {
+			size_t length;
+			const char *s = lua_tolstring(L, index, &length);
+			return String::utf8(s, (int)length);
+		}
+		case LUA_TVECTOR: {
+			// Open question of the spike: Vector2 and Vector3 share Luau's vector
+			const float *v = lua_tovector(L, index);
+			if (v[2] == 0.0f) {
+				return Vector2(v[0], v[1]);
+			}
+			return Vector3(v[0], v[1], v[2]);
+		}
+		case LUA_TUSERDATA: {
+			if (ObjectBox *box = (ObjectBox *)lua_touserdatatagged(L, index, TAG_OBJECT)) {
+				return box->ref;
+			}
+			if (Variant *value = (Variant *)lua_touserdatatagged(L, index, TAG_VARIANT)) {
+				return *value;
+			}
+			return Variant();
+		}
+		case LUA_TTABLE: {
+			GDExtensionObjectPtr object = self_table_owner(L, index);
+			if (object) {
+				Variant result;
+				static GDExtensionVariantFromTypeConstructorFunc from_object = gdextension_interface::get_variant_from_type_constructor(GDEXTENSION_VARIANT_TYPE_OBJECT);
+				from_object(result._native_ptr(), &object);
+				return result;
+			}
+			return Variant();
+		}
+		default:
+			return Variant();
+	}
+}
+
+// ---------------------------------------------------------------- globals
+
+static int vector2_new(lua_State *L) {
+	lua_pushvector(L, (float)luaL_optnumber(L, 1, 0), (float)luaL_optnumber(L, 2, 0), 0.0f);
+	return 1;
+}
+
+static int vector3_new(lua_State *L) {
+	lua_pushvector(L, (float)luaL_optnumber(L, 1, 0), (float)luaL_optnumber(L, 2, 0), (float)luaL_optnumber(L, 3, 0));
+	return 1;
+}
+
+static int print(lua_State *L) {
+	String line;
+	for (int i = 1; i <= lua_gettop(L); i++) {
+		size_t length;
+		const char *s = luaL_tolstring(L, i, &length);
+		line += (i > 1 ? "\t" : "") + String::utf8(s, (int)length);
+		lua_pop(L, 1);
+	}
+	UtilityFunctions::print(line);
+	return 0;
+}
+
+// string:length(): number of characters, like Godot's String.length()
+static int string_length(lua_State *L) {
+	size_t length;
+	const char *s = luaL_checklstring(L, 1, &length);
+	int count = 0;
+	for (size_t i = 0; i < length; i++) {
+		count += (s[i] & 0xC0) != 0x80;
+	}
+	lua_pushinteger(L, count);
+	return 1;
+}
+
+static int class_new(lua_State *L) {
+	ClassInfo *cls = (ClassInfo *)lua_tolightuserdata(L, lua_upvalueindex(1));
+	GDExtensionObjectPtr object = gdextension_interface::classdb_construct_object2(cls->name._native_ptr());
+	push_object(L, object);
+	return 1;
+}
+
+// Globals not defined by scripts: engine singletons (Engine, OS, Input…)
+static int globals_index(lua_State *L) {
+	if (lua_type(L, 2) != LUA_TSTRING) {
+		return 0;
+	}
+	StringName name = string_name_at(L, 2);
+	if (Engine::get_singleton()->has_singleton(name)) {
+		push_object(L, gdextension_interface::global_get_singleton(name._native_ptr()));
+	} else if (ClassDB::class_exists(name)) {
+		// An engine class: a table with `new`
+		lua_newtable(L);
+		lua_pushlightuserdata(L, class_info(name));
+		lua_pushcclosurek(L, class_new, "new", 1, nullptr);
+		lua_setfield(L, -2, "new");
+	} else {
+		return 0;
+	}
+	lua_pushvalue(L, 2);
+	lua_pushvalue(L, -2);
+	lua_rawset(L, 1);  // cache
+	return 1;
+}
+
+void register_globals(lua_State *L) {
+	// Object userdata
+	lua_newtable(L);
+	lua_pushcfunction(L, object_namecall, "__namecall");
+	lua_setfield(L, -2, "__namecall");
+	lua_pushcfunction(L, object_index, "__index");
+	lua_setfield(L, -2, "__index");
+	lua_pushcfunction(L, object_newindex, "__newindex");
+	lua_setfield(L, -2, "__newindex");
+	lua_pushcfunction(L, object_eq, "__eq");
+	lua_setfield(L, -2, "__eq");
+	lua_pushcfunction(L, object_tostring, "__tostring");
+	lua_setfield(L, -2, "__tostring");
+	lua_setuserdatametatable(L, TAG_OBJECT);
+	lua_setuserdatadtor(L, TAG_OBJECT, [](lua_State *, void *p) { ((ObjectBox *)p)->~ObjectBox(); });
+
+	// Other Variants (Rect2, Color, Array…)
+	lua_newtable(L);
+	lua_pushcfunction(L, variant_index, "__index");
+	lua_setfield(L, -2, "__index");
+	lua_pushcfunction(L, variant_namecall, "__namecall");
+	lua_setfield(L, -2, "__namecall");
+	lua_pushcfunction(L, variant_operator<Variant::OP_ADD>, "__add");
+	lua_setfield(L, -2, "__add");
+	lua_pushcfunction(L, variant_operator<Variant::OP_SUBTRACT>, "__sub");
+	lua_setfield(L, -2, "__sub");
+	lua_pushcfunction(L, variant_operator<Variant::OP_MULTIPLY>, "__mul");
+	lua_setfield(L, -2, "__mul");
+	lua_pushcfunction(L, variant_operator<Variant::OP_DIVIDE>, "__div");
+	lua_setfield(L, -2, "__div");
+	lua_pushcfunction(L, variant_operator<Variant::OP_EQUAL>, "__eq");
+	lua_setfield(L, -2, "__eq");
+	lua_pushcfunction(L, variant_tostring, "__tostring");
+	lua_setfield(L, -2, "__tostring");
+	lua_setuserdatametatable(L, TAG_VARIANT);
+	lua_setuserdatadtor(L, TAG_VARIANT, [](lua_State *, void *p) { ((Variant *)p)->~Variant(); });
+
+	lua_pushcfunction(L, vector2_new, "Vector2");
+	lua_setglobal(L, "Vector2");
+	lua_pushcfunction(L, vector3_new, "Vector3");
+	lua_setglobal(L, "Vector3");
+	lua_pushcfunction(L, print, "print");
+	lua_setglobal(L, "print");
+
+	lua_getglobal(L, "string");
+	lua_pushcfunction(L, string_length, "length");
+	lua_setfield(L, -2, "length");
+	lua_pop(L, 1);
+
+	lua_pushvalue(L, LUA_GLOBALSINDEX);
+	lua_newtable(L);
+	lua_pushcfunction(L, globals_index, "__index");
+	lua_setfield(L, -2, "__index");
+	lua_setmetatable(L, -2);
+	lua_pop(L, 1);
+}
+
+// loadstring(code, chunkname?): Luau compiles source only through its
+// compiler library, which the VM doesn't include
+static int loadstring(lua_State *L) {
+	size_t length;
+	const char *code = luaL_checklstring(L, 1, &length);
+	const char *chunkname = luaL_optstring(L, 2, "=loadstring");
+	size_t bytecode_size = 0;
+	char *bytecode = luau_compile(code, length, nullptr, &bytecode_size);
+	int status = luau_load(L, chunkname, bytecode, bytecode_size, 0);
+	::free(bytecode);
+	if (status != 0) {
+		lua_pushnil(L);
+		lua_insert(L, -2);
+		return 2;  // nil, message
+	}
+	return 1;
+}
+
+bool load_chunk(lua_State *L, const String &source, const String &chunkname) {
+	CharString code = source.utf8();
+	CharString name = chunkname.utf8();
+	size_t bytecode_size = 0;
+	char *bytecode = luau_compile(code.get_data(), code.length(), nullptr, &bytecode_size);
+	int status = luau_load(L, name.get_data(), bytecode, bytecode_size, 0);
+	::free(bytecode);
+	return status == 0;
+}
+
+// What Fennel expects of a Lua environment that Luau leaves to the host
+static const char *PRELUDE = R"(
+package = { preload = {}, loaded = {}, path = "", config = "/\n;\n?\n!\n-\n", searchers = {} }
+function require(name)
+	local loaded = package.loaded[name]
+	if loaded ~= nil then return loaded end
+	local loader = package.preload[name]
+	if loader == nil then error("module '" .. tostring(name) .. "' not found") end
+	local result = loader(name)
+	if result == nil then result = true end
+	package.loaded[name] = result
+	return result
+end
+)";
+
+static void load_fennel(lua_State *L) {
+	String source = FileAccess::get_file_as_string("res://addons/godot_luau/fennel.lua");
+	if (source.is_empty()) {
+		return;  // no Fennel support
+	}
+	if (!load_chunk(L, source, "@fennel.lua") || lua_pcall(L, 0, 1, 0) != LUA_OK) {
+		UtilityFunctions::push_error("Loading Fennel: " + String::utf8(lua_tostring(L, -1)));
+		lua_pop(L, 1);
+		return;
+	}
+	lua_getglobal(L, "package");
+	lua_getfield(L, -1, "loaded");
+	lua_pushvalue(L, -3);
+	lua_setfield(L, -2, "fennel");
+	lua_pop(L, 2);
+	lua_rawsetfield(L, LUA_REGISTRYINDEX, "luau.fennel");
+}
+
+bool compile_fennel(lua_State *L, const String &source, const String &path, String &r_lua) {
+	lua_rawgetfield(L, LUA_REGISTRYINDEX, "luau.fennel");
+	if (!lua_istable(L, -1)) {
+		lua_pop(L, 1);
+		r_lua = "Fennel isn't available (addons/godot_luau/fennel.lua missing)";
+		return false;
+	}
+	lua_getfield(L, -1, "compileString");
+	lua_remove(L, -2);
+	CharString code = source.utf8();
+	lua_pushlstring(L, code.get_data(), code.length());
+	lua_newtable(L);
+	CharString filename = path.utf8();
+	lua_pushstring(L, filename.get_data());
+	lua_setfield(L, -2, "filename");
+	lua_pushboolean(L, false);
+	lua_setfield(L, -2, "allowedGlobals");
+	bool ok = lua_pcall(L, 2, 1, 0) == LUA_OK;
+	size_t length;
+	const char *s = lua_tolstring(L, -1, &length);
+	r_lua = s ? String::utf8(s, (int)length) : String("Fennel error");
+	lua_pop(L, 1);
+	return ok;
+}
+
+void open_state() {
+	L_main = luaL_newstate();
+	lua_callbacks(L_main)->useratom = user_atom;
+	luaL_openlibs(L_main);
+	lua_pushcfunction(L_main, loadstring, "loadstring");
+	lua_setglobal(L_main, "loadstring");
+	if (load_chunk(L_main, PRELUDE, "=prelude")) {
+		lua_call(L_main, 0, 0);
+	}
+	register_globals(L_main);
+	load_fennel(L_main);
+}
+
+void close_state() {
+	if (L_main) {
+		lua_close(L_main);
+		L_main = nullptr;
+	}
+	clear_class_infos();
+}
+
+} // namespace luau
