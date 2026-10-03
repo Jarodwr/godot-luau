@@ -47,3 +47,9 @@ at the same optimisation level.
 | [0021](0021-calls-into-other-scripts-via-variant-call.md) | Call other languages' script methods directly | Accepted |
 | [0022](0022-script-instantiation-cost.md) | Investigate script instantiation cost | Proposed |
 | [0023](0023-cheaper-string-conversions.md) | Cheaper string conversions instead of a cache | Accepted |
+| [0024](0024-builtin-types-as-callable-tables.md) | Builtin types are callable global tables; their values are immutable | Accepted |
+| [0025](0025-vector-and-string-methods.md) | Methods on vectors and on Lua strings | Accepted |
+| [0026](0026-utilities-and-enums-as-data.md) | Utility functions, global enums and class constants from generated data | Accepted |
+| [0027](0027-iteration-and-table-conversion.md) | Iterating Godot collections; Lua tables become Array or Dictionary | Accepted |
+| [0028](0028-validated-operators-for-plain-types.md) | Validated operators for plain builtin types | Proposed |
+| [0029](0029-builtin-method-pointers.md) | Cached method pointers for builtin values | Proposed |
