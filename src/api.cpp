@@ -228,6 +228,109 @@ struct NativeSlot {
 	}
 };
 
+// ---- String conversion caches (docs/adr/0018)
+//
+// Direct-mapped, both directions. Each entry holds a reference to both
+// sides, so neither can be freed and its address reused while cached: a key
+// match always means the same content.
+//
+// A string is cached the second time its slot sees it (`seen`: an address
+// and a hash of the bytes, holding nothing): strings that never repeat pay a
+// short hash instead of evicting and storing an entry (measured ~17 ns per
+// round trip). The hash matters because the allocator reuses addresses for
+// temporary strings. A false match only causes caching, never a wrong result.
+constexpr size_t STRING_CACHE_SIZE = 1024;
+
+struct ToLuaSlot {
+	const void *seen = nullptr;
+	uint64_t seen_hash = 0;
+	const void *key = nullptr;  // the String's buffer
+	String keep;
+	int ref = LUA_NOREF;
+};
+
+struct ToGodotSlot {
+	const char *seen = nullptr;
+	uint64_t seen_hash = 0;
+	const char *key = nullptr;  // the Lua string's characters
+	String value;
+	int ref = LUA_NOREF;
+};
+
+static ToLuaSlot *to_lua_strings = nullptr;
+static ToGodotSlot *to_godot_strings = nullptr;
+
+static uint64_t bytes_hash(const char *s, size_t length) {
+	uint64_t h = 1469598103934665603ull ^ length;
+	for (size_t i = 0; i < length && i < 64; i++) {
+		h = (h ^ (unsigned char)s[i]) * 1099511628211ull;
+	}
+	return h;
+}
+
+static size_t string_slot(const void *pointer) {
+	return (reinterpret_cast<uintptr_t>(pointer) >> 4) % STRING_CACHE_SIZE;
+}
+
+static void push_string(lua_State *L, const String &s) {
+	const void *key = *reinterpret_cast<const void *const *>(s._native_ptr());
+	if (key == nullptr || to_lua_strings == nullptr) {
+		CharString utf8 = s.utf8();
+		lua_pushlstring(L, utf8.get_data(), utf8.length());
+		return;
+	}
+	ToLuaSlot &slot = to_lua_strings[string_slot(key)];
+	if (slot.key == key) {
+		lua_getref(L, slot.ref);
+		return;
+	}
+	CharString utf8 = s.utf8();
+	lua_pushlstring(L, utf8.get_data(), utf8.length());
+	uint64_t hash = bytes_hash(utf8.get_data(), utf8.length());
+	if (slot.seen != key || slot.seen_hash != hash) {
+		slot.seen = key;
+		slot.seen_hash = hash;
+		return;
+	}
+	if (slot.ref != LUA_NOREF) {
+		lua_unref(L, slot.ref);
+	}
+	slot.key = key;
+	slot.keep = s;
+	slot.ref = lua_ref(L, -1);
+}
+
+// The Godot String for the Lua string at `index`. The reference is valid
+// until the next conversion: callers copy it.
+static const String &to_godot_string(lua_State *L, int index) {
+	size_t length;
+	const char *s = lua_tolstring(L, index, &length);
+	static String uncached;
+	if (to_godot_strings == nullptr) {
+		uncached = String::utf8(s, (int)length);
+		return uncached;
+	}
+	ToGodotSlot &slot = to_godot_strings[string_slot(s)];
+	if (slot.key != s) {
+		uint64_t hash = bytes_hash(s, length);
+		if (slot.seen != s || slot.seen_hash != hash) {
+			slot.seen = s;
+			slot.seen_hash = hash;
+			uncached = String::utf8(s, (int)length);
+			return uncached;
+		}
+	}
+	if (slot.key != s) {
+		if (slot.ref != LUA_NOREF) {
+			lua_unref(L, slot.ref);
+		}
+		slot.value = String::utf8(s, (int)length);
+		slot.key = s;
+		slot.ref = lua_ref(L, index);
+	}
+	return slot.value;
+}
+
 // NodePaths for strings used as path arguments, by atom (docs/adr/0017)
 static HashMap<int, NodePath> node_paths;
 constexpr int MAX_NODE_PATHS = 4096;
@@ -261,9 +364,7 @@ static bool to_native(lua_State *L, int index, ArgType type, NativeSlot &slot, G
 			return true;
 		case T_STRING: {
 			if (lua_type(L, index) != LUA_TSTRING) return false;
-			size_t length;
-			const char *s = lua_tolstring(L, index, &length);
-			new (slot.bytes) String(String::utf8(s, (int)length));
+			new (slot.bytes) String(to_godot_string(L, index));
 			slot.constructed = T_STRING;
 			return true;
 		}
@@ -338,10 +439,6 @@ static void prepare_return(ArgType type, NativeSlot &slot) {
 	}
 }
 
-static void push_string(lua_State *L, const String &s) {
-	CharString utf8 = s.utf8();
-	lua_pushlstring(L, utf8.get_data(), utf8.length());
-}
 
 // Lua strings for StringNames returned by the engine, keyed by the interned
 // data pointer (docs/adr/0007). The StringName copy keeps the pointer valid.
@@ -1126,11 +1223,8 @@ Variant to_variant(lua_State *L, int index) {
 			}
 			return d;
 		}
-		case LUA_TSTRING: {
-			size_t length;
-			const char *s = lua_tolstring(L, index, &length);
-			return String::utf8(s, (int)length);
-		}
+		case LUA_TSTRING:
+			return to_godot_string(L, index);
 		case LUA_TVECTOR: {
 			// Open question: Vector2 and Vector3 share Luau's vector
 			const float *v = lua_tovector(L, index);
@@ -1420,6 +1514,8 @@ void open_state() {
 #endif
 	lua_callbacks(L_main)->useratom = user_atom;
 	check_variant_layout();
+	to_lua_strings = new ToLuaSlot[STRING_CACHE_SIZE];
+	to_godot_strings = new ToGodotSlot[STRING_CACHE_SIZE];
 	luaL_openlibs(L_main);
 	lua_pushcfunction(L_main, loadstring, "loadstring");
 	lua_setglobal(L_main, "loadstring");
@@ -1435,6 +1531,10 @@ void open_state() {
 }
 
 void close_state() {
+	delete[] to_lua_strings;
+	delete[] to_godot_strings;
+	to_lua_strings = nullptr;
+	to_godot_strings = nullptr;
 	name_strings.clear();
 	node_paths.clear();
 	if (L_main) {

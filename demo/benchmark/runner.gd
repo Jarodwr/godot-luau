@@ -59,6 +59,7 @@ const CASES := [
 	{"name": "echo_int", "kind": "boundary", "n": 200000, "group": "boundary", "desc": "obj.echo(int) round trip"},
 	{"name": "echo_float", "kind": "boundary", "n": 200000, "group": "boundary", "desc": "obj.echo(float) round trip"},
 	{"name": "echo_string", "kind": "boundary", "n": 200000, "group": "boundary", "desc": "obj.echo(String) round trip"},
+	{"name": "echo_string_unique", "kind": "boundary", "n": 200000, "group": "boundary", "desc": "obj.echo(String) with a different string every call (string caches miss)"},
 	{"name": "echo_vector2", "kind": "boundary", "n": 200000, "group": "boundary", "desc": "obj.echo(Vector2) round trip"},
 	{"name": "echo_array16", "kind": "boundary", "n": 200000, "group": "boundary", "desc": "obj.echo(Array of 16) round trip"},
 	{"name": "echo_dict16", "kind": "boundary", "n": 200000, "group": "boundary", "desc": "obj.echo(Dictionary of 16) round trip"},
@@ -310,6 +311,13 @@ func b_echo_string(o: Object, n: int) -> Variant:
 	var s := 0
 	for i in n:
 		s += o.echo("hello world").length()
+	return s
+
+
+func b_echo_string_unique(o: Object, n: int) -> Variant:
+	var s := 0
+	for i in n:
+		s += o.echo(str(i)).length()
 	return s
 
 
