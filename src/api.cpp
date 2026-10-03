@@ -717,23 +717,23 @@ static void generic_set(lua_State *L, GDExtensionObjectPtr object, const StringN
 }
 
 // Object.call(name, args...): script methods and anything not in the table
-static bool generic_call(lua_State *L, GDExtensionObjectPtr object, const StringName &name, int first, int argc) {
-	if (argc + 1 > MAX_VARIANT_ARGS) {
+// Methods that aren't engine methods (other languages' scripts, anything not
+// in the method table): `variant_call` on the object's Variant reaches
+// Object::callp directly, with no Variant for the name and no vararg packing
+// as through Object.call (docs/adr/0021)
+static bool generic_call(lua_State *L, Variant &object, const StringName &name, int first, int argc) {
+	if (argc > MAX_VARIANT_ARGS) {
 		lua_pushstring(L, "too many arguments");
 		return false;
 	}
-	const Method &call = object_method("call");
 	VariantResult result;
 	GDExtensionCallError error;
 	{
 		VariantArgs args;
-		new (args.storage[0]) Variant(name);
-		args.argv[0] = reinterpret_cast<const Variant *>(args.storage[0]);
-		args.count = 1;
 		for (int i = 0; i < argc; i++) {
 			args.add(L, first + i);
 		}
-		gdextension_interface::object_method_bind_call(call.bind, object, args.pointers(), argc + 1, result.uninitialized(), &error);
+		gdextension_interface::variant_call(object._native_ptr(), name._native_ptr(), args.pointers(), argc, result.uninitialized(), &error);
 	}
 	if (error.error != GDEXTENSION_CALL_OK) {
 		CharString n = String(name).utf8();
@@ -938,7 +938,7 @@ static int object_namecall(lua_State *L) {
 	if (member.kind == MemberKind::METHOD && member.method.bind) {
 		ok = call_method(L, object, member.method, 2, lua_gettop(L) - 1);
 	} else {
-		ok = generic_call(L, object, atom >= 0 ? atom_name(atom) : StringName(name), 2, lua_gettop(L) - 1);
+		ok = generic_call(L, box->ref, atom >= 0 ? atom_name(atom) : StringName(name), 2, lua_gettop(L) - 1);
 	}
 	if (!ok) {
 		lua_error(L);
