@@ -14,6 +14,11 @@ void clear_builtins();
 // there's none
 bool push_builtin_global(lua_State *L, const char *name);
 
+// Calls a builtin method (name atom `atom`) on `self` through a cached method
+// pointer, with Lua arguments [first, first + argc); pushes the result.
+// False (nothing pushed) if this call needs variant_call instead.
+bool call_builtin_method(lua_State *L, const Variant *self, int atom, int first, int argc);
+
 // Pushes the table for an engine class: `new` and its constants
 void push_class_table(lua_State *L, ClassInfo *cls);
 

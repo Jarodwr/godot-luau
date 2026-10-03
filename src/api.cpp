@@ -1037,9 +1037,13 @@ static int variant_namecall(lua_State *L) {
 	Variant *self = (Variant *)lua_touserdatatagged(L, 1, TAG_VARIANT);
 	int atom = -1;
 	const char *name = lua_namecallatom(L, &atom);
+	int argc = lua_gettop(L) - 1;
+	// A cached method pointer when the method and arguments allow it (ADR 0029)
+	if (call_builtin_method(L, self, atom, 2, argc)) {
+		return 1;
+	}
 	StringName uncached;
 	const StringName &method = atom >= 0 ? atom_name(atom) : (uncached = StringName(name));
-	int argc = lua_gettop(L) - 1;
 	if (argc > MAX_VARIANT_ARGS) {
 		luaL_error(L, "too many arguments");
 	}

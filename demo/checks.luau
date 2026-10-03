@@ -52,6 +52,31 @@ function Checks:api_checks()
 	check("table to engine argument", PackedStringArray({ "x", "y" }):size() == 2)
 	check("value types are immutable", not pcall(function() local col = Color(1, 1, 1); col.r = 0 end))
 	check("Color.RED unchanged", Color.RED.r == 1)
+	-- Cached builtin method pointers (ADR 0029)
+	local arr2 = Array()
+	arr2:append(5); arr2:append(7)
+	check("Array.append mutates the held array", arr2:size() == 2 and arr2[1] == 7)
+	local held = { arr = arr2 }
+	held.arr:append(9)
+	check("same Array through another reference", arr2:size() == 3)
+	local d2 = Dictionary()
+	d2[1] = "a"
+	check("Dictionary methods", d2:has(1) and not d2:has(2) and d2:size() == 1)
+	local grown = Rect2(0, 0, 10, 10):grow(1)
+	check("method returning an inline type", grown.size.x == 12 and grown.position.x == -1)
+	check("Color method", Color(0.5, 0.5, 0.5):lightened(1).r == 1)
+	local t2 = Transform2D(0, Vector2(10, 20))
+	check("heap-type receiver", t2:basis_xform(Vector2(1, 0)).x == 1 and t2:get_origin().y == 20)
+	check("method returning a heap type", t2:translated(Vector2(1, 1)):get_origin().x == 11)
+	check("Vector2i method", Vector2i(-3, 4):abs().x == 3)
+	local pf = PackedFloat32Array()
+	pf:append(1.5); pf:append(2.5)
+	local same = pf
+	same:append(3.5)
+	check("PackedFloat32Array append/size through references", pf:size() == 3 and pf[2] == 3.5 and #pf == 3)
+	local ps = PackedStringArray({ "a", "b" })
+	check("PackedStringArray methods", ps:has("b") and ps:find("b") == 1)
+	check("method with a default argument, fewer args", Dictionary({ a = 1 }):get("zz") == nil)
 	return results
 end
 

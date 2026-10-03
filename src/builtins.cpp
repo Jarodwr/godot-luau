@@ -12,6 +12,8 @@
 #include <godot_cpp/godot.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/transform2d.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
 #include <lualib.h>
 
 #include <cmath>
@@ -60,6 +62,26 @@ struct BuiltinMember {
 
 const BuiltinMember BUILTIN_MEMBERS[] = {
 #include "builtin_data.inc"
+};
+
+// Builtin methods with signatures (types as Variant::Type numbers)
+constexpr int32_t VARIANT_TYPE_ANY = 1000;
+constexpr int32_t VARIANT_TYPE_VOID = 1001;
+constexpr int32_t VARIANT_TYPE_UNSUPPORTED = 1002;
+enum : uint8_t { BM_VARARG = 1, BM_STATIC = 2, BM_DEFAULTS = 4 };
+
+struct BuiltinMethodInfo {
+	const char *type;
+	const char *name;
+	int64_t hash;
+	int32_t ret;
+	uint8_t argc;
+	int32_t args[MAX_FAST_ARGS];
+	uint8_t flags;
+};
+
+const BuiltinMethodInfo BUILTIN_METHODS[] = {
+#include "builtin_method_data.inc"
 };
 
 template <typename T, size_t N, typename Less>
@@ -145,6 +167,311 @@ int finish_call(lua_State *L, VariantResult &result, const GDExtensionCallError 
 }
 
 } // namespace
+
+// ---------------------------------------------------------------- builtin method pointers (ADR 0029)
+//
+// Methods on builtin values are called through cached method pointers with
+// native argument and result layouts, instead of a lookup by name per call.
+// The receiver is the value inside its Variant: inline types (Rect2, Color,
+// Array, String…) at the data offset, heap types (Transform2D, Basis…) behind
+// the pointer stored there. Packed arrays (behind engine-internal storage),
+// varargs and calls with fewer arguments than declared use variant_call.
+
+namespace {
+
+bool builtin_layout_ok = false;
+// Packed arrays: the Variant holds a pointer to a reference-counted holder,
+// with the array at this offset (checked at startup; off if it fails)
+bool packed_layout_ok = false;
+constexpr size_t PACKED_ARRAY_OFFSET = 16;  // after the holder's vtable and reference count
+
+enum class BaseKind : uint8_t { NONE, INLINE, HEAP, PACKED };
+
+BaseKind base_kind(Variant::Type type) {
+	switch (type) {
+		case Variant::VECTOR2I: case Variant::RECT2: case Variant::RECT2I: case Variant::VECTOR3I:
+		case Variant::VECTOR4: case Variant::VECTOR4I: case Variant::PLANE: case Variant::QUATERNION:
+		case Variant::COLOR: case Variant::RID: case Variant::STRING: case Variant::STRING_NAME:
+		case Variant::NODE_PATH: case Variant::CALLABLE: case Variant::SIGNAL: case Variant::DICTIONARY:
+		case Variant::ARRAY:
+			return BaseKind::INLINE;
+		case Variant::TRANSFORM2D: case Variant::AABB: case Variant::BASIS: case Variant::TRANSFORM3D:
+		case Variant::PROJECTION:
+			return BaseKind::HEAP;
+		default:
+			if (type >= Variant::PACKED_BYTE_ARRAY && type < Variant::VARIANT_MAX) {
+				return packed_layout_ok ? BaseKind::PACKED : BaseKind::NONE;
+			}
+			return BaseKind::NONE;
+	}
+}
+
+// Types whose values live inside the Variant's data with no destructor:
+// results of these are written straight into a new userdata
+bool is_plain_inline(int32_t type) {
+	switch (type) {
+		case Variant::VECTOR2I: case Variant::RECT2: case Variant::RECT2I: case Variant::VECTOR3I:
+		case Variant::VECTOR4: case Variant::VECTOR4I: case Variant::PLANE: case Variant::QUATERNION:
+		case Variant::COLOR: case Variant::RID:
+			return true;
+		default:
+			return false;
+	}
+}
+
+// A pointer to the typed value inside a Variant (receiver or argument)
+void *typed_pointer(const Variant *value) {
+	unsigned char *data = reinterpret_cast<unsigned char *>(const_cast<Variant *>(value)->_native_ptr()) + VARIANT_DATA;
+	switch (base_kind(type_of(*value))) {
+		case BaseKind::HEAP:
+			return *reinterpret_cast<void **>(data);
+		case BaseKind::PACKED:
+			return *reinterpret_cast<unsigned char **>(data) + PACKED_ARRAY_OFFSET;
+		default:
+			return data;
+	}
+}
+
+struct BuiltinMethod {
+	GDExtensionPtrBuiltInMethod function = nullptr;
+	const BuiltinMethodInfo *info = nullptr;
+};
+
+// Per type, per name atom: resolved on first use (null info: not usable)
+std::vector<BuiltinMethod *> builtin_methods[Variant::VARIANT_MAX];
+
+const BuiltinMethodInfo *find_builtin_method(const char *type, const char *name) {
+	return find_sorted(BUILTIN_METHODS, [type, name](const BuiltinMethodInfo &m) {
+		int c = strcmp(m.type, type);
+		return c != 0 ? c : strcmp(m.name, name);
+	});
+}
+
+const BuiltinMethod &builtin_method(Variant::Type type, int atom) {
+	std::vector<BuiltinMethod *> &table = builtin_methods[type];
+	if ((size_t)atom >= table.size()) {
+		table.resize(atom + 1, nullptr);
+	}
+	if (table[atom] == nullptr) {
+		BuiltinMethod *method = new BuiltinMethod();
+		CharString name = String(atom_name(atom)).utf8();
+		const BuiltinMethodInfo *info = find_builtin_method(type_name(type), name.get_data());
+		bool usable = info && !(info->flags & (BM_VARARG | BM_STATIC)) && info->ret != VARIANT_TYPE_UNSUPPORTED;
+		for (int i = 0; usable && i < info->argc && i < MAX_FAST_ARGS; i++) {
+			usable = info->args[i] != VARIANT_TYPE_UNSUPPORTED;
+		}
+		if (usable && info->argc <= MAX_FAST_ARGS) {
+			method->function = gdextension_interface::variant_get_ptr_builtin_method((GDExtensionVariantType)type, atom_name(atom)._native_ptr(), info->hash);
+			method->info = method->function ? info : nullptr;
+		}
+		table[atom] = method;
+	}
+	return *table[atom];
+}
+
+// The engine-side argument type for the simple cases to_native handles
+ArgType simple_arg(int32_t type) {
+	switch (type) {
+		case Variant::BOOL: return T_BOOL;
+		case Variant::INT: return T_INT;
+		case Variant::FLOAT: return T_FLOAT;
+		case Variant::STRING: return T_STRING;
+		case Variant::STRING_NAME: return T_STRING_NAME;
+		case Variant::NODE_PATH: return T_NODE_PATH;
+		case Variant::VECTOR2: return T_VECTOR2;
+		case Variant::VECTOR3: return T_VECTOR3;
+		case Variant::OBJECT: return T_OBJECT_REF;
+		case VARIANT_TYPE_ANY: return T_VARIANT;
+		default: return T_OTHER;
+	}
+}
+
+// Per-type default constructor, from-type and destructor, for results that
+// aren't plain inline values
+struct TypeOps {
+	GDExtensionPtrConstructor construct = nullptr;
+	GDExtensionVariantFromTypeConstructorFunc to_variant = nullptr;
+	GDExtensionPtrDestructor destroy = nullptr;
+};
+TypeOps type_ops[Variant::VARIANT_MAX];
+
+const TypeOps &ops_for(int32_t type) {
+	TypeOps &ops = type_ops[type];
+	if (ops.to_variant == nullptr) {
+		ops.construct = gdextension_interface::variant_get_ptr_constructor((GDExtensionVariantType)type, 0);
+		ops.to_variant = gdextension_interface::get_variant_from_type_constructor((GDExtensionVariantType)type);
+		ops.destroy = gdextension_interface::variant_get_ptr_destructor((GDExtensionVariantType)type);
+	}
+	return ops;
+}
+
+} // namespace
+
+bool call_builtin_method(lua_State *L, const Variant *self, int atom, int first, int argc) {
+	if (!builtin_layout_ok || atom < 0) {
+		return false;
+	}
+	Variant::Type self_type = type_of(*self);
+	if (base_kind(self_type) == BaseKind::NONE) {
+		return false;
+	}
+	const BuiltinMethod &method = builtin_method(self_type, atom);
+	const BuiltinMethodInfo *info = method.info;
+	if (info == nullptr || argc != info->argc) {
+		return false;
+	}
+	// Arguments
+	NativeSlot slots[MAX_FAST_ARGS];
+	GDExtensionConstTypePtr argv[MAX_FAST_ARGS];
+	for (int i = 0; i < argc; i++) {
+		int32_t type = info->args[i];
+		argv[i] = slots[i].bytes;
+		ArgType simple = simple_arg(type);
+		if (simple != T_OTHER) {
+			if (!to_native(L, first + i, simple, slots[i], argv[i])) {
+				return false;
+			}
+			continue;
+		}
+		// Other builtin types: a Godot value of exactly that type, used in place
+		const Variant *held = borrow_variant(L, first + i);
+		if (held == nullptr || type_of(*held) != (Variant::Type)type || base_kind((Variant::Type)type) == BaseKind::NONE) {
+			return false;
+		}
+		argv[i] = typed_pointer(held);
+	}
+	void *base = typed_pointer(self);
+	int32_t ret = info->ret;
+	switch (ret) {
+		case VARIANT_TYPE_VOID:
+			method.function(base, argv, nullptr, argc);
+			lua_pushnil(L);
+			return true;
+		case Variant::BOOL: {
+			GDExtensionBool b = false;
+			method.function(base, argv, &b, argc);
+			lua_pushboolean(L, b);
+			return true;
+		}
+		case Variant::INT: {
+			int64_t v = 0;
+			method.function(base, argv, &v, argc);
+			lua_pushnumber(L, (double)v);
+			return true;
+		}
+		case Variant::FLOAT: {
+			double d = 0;
+			method.function(base, argv, &d, argc);
+			lua_pushnumber(L, d);
+			return true;
+		}
+		case Variant::VECTOR2: {
+			float v[2] = {};
+			method.function(base, argv, v, argc);
+			lua_pushvector(L, v[0], v[1], 0.0f);
+			return true;
+		}
+		case Variant::VECTOR3: {
+			float v[3] = {};
+			method.function(base, argv, v, argc);
+			lua_pushvector(L, v[0], v[1], v[2]);
+			return true;
+		}
+		case Variant::STRING: {
+			alignas(String) unsigned char s[sizeof(String)] = {};  // an empty String
+			method.function(base, argv, s, argc);
+			push_string(L, *reinterpret_cast<String *>(s));
+			reinterpret_cast<String *>(s)->~String();
+			return true;
+		}
+		case Variant::STRING_NAME: {
+			alignas(StringName) unsigned char s[sizeof(StringName)] = {};  // an empty StringName
+			method.function(base, argv, s, argc);
+			push_string_name(L, *reinterpret_cast<StringName *>(s));
+			reinterpret_cast<StringName *>(s)->~StringName();
+			return true;
+		}
+		case Variant::OBJECT: {
+			GDExtensionObjectPtr object = nullptr;
+			method.function(base, argv, &object, argc);
+			push_object(L, object);
+			return true;
+		}
+		case VARIANT_TYPE_ANY: {
+			alignas(Variant) unsigned char v[sizeof(Variant)] = {};  // a nil Variant
+			method.function(base, argv, v, argc);
+			Variant *value = reinterpret_cast<Variant *>(v);
+			if (!push_plain_variant(L, *value)) {
+				push_variant(L, *value);
+			}
+			if (needs_destroy(v)) {
+				value->~Variant();
+			}
+			return true;
+		}
+		default:
+			break;
+	}
+	if (is_plain_inline(ret)) {
+		// Straight into the new userdata's Variant: type tag, then the value
+		unsigned char *box = (unsigned char *)lua_newuserdatataggedwithmetatable(L, sizeof(Variant), TAG_VARIANT);
+		memset(box, 0, sizeof(Variant));
+		*reinterpret_cast<int32_t *>(box) = ret;
+		method.function(base, argv, box + VARIANT_DATA, argc);
+		return true;
+	}
+	// Anything else: construct, call, convert to a Variant in a new userdata
+	const TypeOps &ops = ops_for(ret);
+	if (ops.construct == nullptr || ops.to_variant == nullptr) {
+		return false;
+	}
+	alignas(16) unsigned char value[64];
+	ops.construct(value, nullptr);
+	method.function(base, argv, value, argc);
+	Variant *box = (Variant *)lua_newuserdatataggedwithmetatable(L, sizeof(Variant), TAG_VARIANT);
+	ops.to_variant(box->_native_ptr(), value);
+	if (ops.destroy) {
+		ops.destroy(value);
+	}
+	return true;
+}
+
+static void check_builtin_layout() {
+	// An inline reference type: an Array's data is its Array (copies share
+	// the same internal pointer). A heap type: the data points at the value.
+	Array array;
+	array.append(1);
+	Variant av = array;
+	Transform2D t(0.5, Vector2(3, 4));
+	Variant tv = t;
+	builtin_layout_ok = type_of(av) == Variant::ARRAY && type_of(tv) == Variant::TRANSFORM2D
+			&& *reinterpret_cast<void **>(typed_pointer(&av)) == *reinterpret_cast<const void *const *>(array._native_ptr())
+			&& *reinterpret_cast<const Transform2D *>(typed_pointer(&tv)) == t;
+	if (!builtin_layout_ok) {
+		return;
+	}
+	// Packed arrays: the candidate pointer must give the right size through
+	// the size() method pointer, and share the array's data with a copy
+	PackedFloat32Array packed;
+	packed.push_back(1.5f);
+	packed.push_back(2.5f);
+	packed.push_back(3.5f);
+	Variant pv = packed;
+	static const StringName size_name("size");
+	GDExtensionPtrBuiltInMethod size = gdextension_interface::variant_get_ptr_builtin_method(
+			GDEXTENSION_VARIANT_TYPE_PACKED_FLOAT32_ARRAY, size_name._native_ptr(), 3173160232LL);
+	if (type_of(pv) != Variant::PACKED_FLOAT32_ARRAY || size == nullptr) {
+		return;
+	}
+	packed_layout_ok = true;  // so typed_pointer gives the candidate
+	unsigned char *candidate = (unsigned char *)typed_pointer(&pv);
+	int64_t count = -1;
+	size(candidate, nullptr, &count, 0);
+	// Both hold the same copy-on-write buffer (no write happened since)
+	const void *const *a = reinterpret_cast<const void *const *>(candidate);
+	const void *const *b = reinterpret_cast<const void *const *>(packed._native_ptr());
+	packed_layout_ok = count == 3 && a[1] == b[1] && a[1] != nullptr;
+}
 
 // ---------------------------------------------------------------- builtin type globals (ADR 0024)
 
@@ -1013,6 +1340,7 @@ Variant table_aware_to_variant(lua_State *L, int index, int depth) {
 
 void register_builtins(lua_State *L) {
 	utility_pointers.assign(sizeof(UTILITIES) / sizeof(UTILITIES[0]), nullptr);
+	check_builtin_layout();
 	register_builtin_types(L);
 	register_vector_methods(L);
 	register_string_methods(L);
@@ -1026,6 +1354,12 @@ void register_builtins(lua_State *L) {
 }
 
 void clear_builtins() {
+	for (std::vector<BuiltinMethod *> &table : builtin_methods) {
+		for (BuiltinMethod *method : table) {
+			delete method;
+		}
+		table.clear();
+	}
 	held_names.clear();
 	utility_pointers.clear();
 }
