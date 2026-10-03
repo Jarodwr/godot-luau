@@ -27,9 +27,20 @@ struct Instance {
 	int table_ref = LUA_NOREF;  // T
 	int cache_ref = LUA_NOREF;  // B
 	int meta_ref = LUA_NOREF;   // M
+	// Upvalue of the miss handlers: holds this instance, or null once freed
+	// (docs/adr/0011)
+	struct Handle *handle = nullptr;
+};
+
+struct Handle {
+	Instance *instance;
 };
 
 static HashMap<GDExtensionObjectPtr, Instance *> instances;
+
+static Instance *upvalue_instance(lua_State *L) {
+	return static_cast<Handle *>(lua_touserdata(L, lua_upvalueindex(1)))->instance;
+}
 static const char INSTANCE_KEY = 0;
 
 bool push_self_table(lua_State *L, GDExtensionObjectPtr object) {
@@ -98,7 +109,7 @@ static LuauScript::Route route_of(lua_State *L, Instance *instance, int atom) {
 
 // B's __index: names neither in T nor cached in B
 static int cache_index(lua_State *L) {
-	Instance *instance = instance_in(L, 1);
+	Instance *instance = upvalue_instance(L);
 	if (instance == nullptr) {
 		luaL_error(L, "attempt to use a freed object");
 	}
@@ -139,9 +150,7 @@ static int cache_index(lua_State *L) {
 // T's __newindex: names not in T yet. Engine properties go to their setter;
 // anything else becomes a field.
 static int self_newindex(lua_State *L) {
-	lua_getmetatable(L, 1);
-	Instance *instance = instance_in(L, -1);
-	lua_pop(L, 1);
+	Instance *instance = upvalue_instance(L);
 	if (instance == nullptr) {
 		luaL_error(L, "attempt to use a freed object");
 	}
@@ -163,22 +172,27 @@ static void create_self_table(lua_State *L, Instance *instance) {
 	lua_newtable(L);  // M
 	lua_newtable(L);  // B
 
-	lua_pushlightuserdata(L, (void *)&INSTANCE_KEY);
-	lua_pushlightuserdata(L, instance);
-	lua_rawset(L, -3);
-	lua_rawgetfield(L, LUA_REGISTRYINDEX, "luau.cache_meta");
-	lua_setmetatable(L, -2);
-	lua_pushvalue(L, -1);
+	instance->handle = static_cast<Handle *>(lua_newuserdata(L, sizeof(Handle)));
+	instance->handle->instance = instance;
+	int handle = lua_gettop(L);
+
+	lua_newtable(L);  // B's metatable
+	lua_pushvalue(L, handle);
+	lua_pushcclosurek(L, cache_index, "__index", 1, nullptr);
+	lua_setfield(L, -2, "__index");
+	lua_setmetatable(L, -3);  // B
+	lua_insert(L, -3);        // T handle M B
 	instance->cache_ref = lua_ref(L, -1);
-	lua_pop(L, 1);
 	lua_setfield(L, -2, "__index");  // M.__index = B
 
 	lua_pushlightuserdata(L, (void *)&INSTANCE_KEY);
 	lua_pushlightuserdata(L, instance);
 	lua_rawset(L, -3);
-	lua_pushcfunction(L, self_newindex, "__newindex");
+	lua_pushvalue(L, -2);
+	lua_pushcclosurek(L, self_newindex, "__newindex", 1, nullptr);
 	lua_setfield(L, -2, "__newindex");
 	instance->meta_ref = lua_ref(L, -1);
+	lua_remove(L, -2);        // T M
 	lua_setmetatable(L, -2);  // T's metatable = M
 
 	instance->table_ref = lua_ref(L, -1);
@@ -282,14 +296,14 @@ static void free_func(Instance *instance) {
 	lua_State *L = state();
 	if (L) {
 		// Lua may still hold the table: forget the instance
-		for (int ref : { instance->cache_ref, instance->meta_ref }) {
-			lua_getref(L, ref);
-			lua_pushlightuserdata(L, (void *)&INSTANCE_KEY);
-			lua_pushnil(L);
-			lua_rawset(L, -3);
-			lua_pop(L, 1);
-			lua_unref(L, ref);
-		}
+		instance->handle->instance = nullptr;
+		lua_getref(L, instance->meta_ref);
+		lua_pushlightuserdata(L, (void *)&INSTANCE_KEY);
+		lua_pushnil(L);
+		lua_rawset(L, -3);
+		lua_pop(L, 1);
+		lua_unref(L, instance->meta_ref);
+		lua_unref(L, instance->cache_ref);
 		lua_unref(L, instance->table_ref);
 	}
 	instances.erase(instance->owner);
@@ -432,11 +446,6 @@ void LuauLanguage::_init() {
 	if (state() == nullptr) {
 		open_state();
 	}
-	lua_State *L = state();
-	lua_newtable(L);
-	lua_pushcfunction(L, cache_index, "__index");
-	lua_setfield(L, -2, "__index");
-	lua_rawsetfield(L, LUA_REGISTRYINDEX, "luau.cache_meta");
 }
 
 void LuauLanguage::_finish() {

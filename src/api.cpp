@@ -139,6 +139,7 @@ ClassInfo *class_info(const StringName &class_name) {
 	}
 	ClassInfo *info = new ClassInfo();
 	info->name = class_name;
+	info->is_ref_counted = ClassDB::is_parent_class(class_name, "RefCounted");
 	class_infos.insert(class_name, info);
 	return info;
 }
@@ -381,10 +382,80 @@ static bool call_variant(lua_State *L, GDExtensionObjectPtr object, GDExtensionM
 	return true;
 }
 
+// ---- Simple calls: at most one argument and a result of the common types
+// skip the generic marshalling below (docs/adr/0012), e.g.
+// Engine:get_frames_drawn() or node:set_visible(b).
+union SimpleValue {
+	float v[4];
+	double d;
+	int64_t i;
+	GDExtensionBool b;
+};
+
+static bool is_simple(ArgType type) {
+	return type == T_VECTOR2 || type == T_VECTOR3 || type == T_FLOAT || type == T_INT || type == T_BOOL;
+}
+
+static bool to_simple(lua_State *L, int index, ArgType type, SimpleValue &r_value) {
+	switch (type) {
+		case T_VECTOR2:
+		case T_VECTOR3: {
+			const float *v = lua_tovector(L, index);
+			if (v == nullptr) return false;
+			r_value.v[0] = v[0];
+			r_value.v[1] = v[1];
+			r_value.v[2] = v[2];
+			return true;
+		}
+		case T_FLOAT:
+			if (lua_type(L, index) != LUA_TNUMBER) return false;
+			r_value.d = lua_tonumber(L, index);
+			return true;
+		case T_INT:
+			if (lua_type(L, index) != LUA_TNUMBER) return false;
+			r_value.i = (int64_t)lua_tonumber(L, index);
+			return true;
+		case T_BOOL:
+			r_value.b = lua_toboolean(L, index);
+			return true;
+		default:
+			return false;
+	}
+}
+
+static void push_simple(lua_State *L, ArgType type, const SimpleValue &value) {
+	switch (type) {
+		case T_VECTOR2: lua_pushvector(L, value.v[0], value.v[1], 0.0f); break;
+		case T_VECTOR3: lua_pushvector(L, value.v[0], value.v[1], value.v[2]); break;
+		case T_FLOAT: lua_pushnumber(L, value.d); break;
+		case T_INT: lua_pushnumber(L, (double)value.i); break;
+		case T_BOOL: lua_pushboolean(L, value.b); break;
+		default: lua_pushnil(L); break;
+	}
+}
+
+static bool fast_call(lua_State *L, GDExtensionObjectPtr object, const Method &method, int first, int argc) {
+	const MethodInfo *info = method.info;
+	if (!method.ptrcall || argc != info->argc || argc > 1 || (info->ret != T_VOID && !is_simple(info->ret))) {
+		return false;
+	}
+	SimpleValue arg, result;
+	GDExtensionConstTypePtr argv[] = { &arg };
+	if (argc == 1 && (!is_simple(info->args[0]) || !to_simple(L, first, info->args[0], arg))) {
+		return false;
+	}
+	gdextension_interface::object_method_bind_ptrcall(method.bind, object, argc ? argv : nullptr, info->ret == T_VOID ? nullptr : &result);
+	push_simple(L, info->ret, result);
+	return true;
+}
+
 bool call_method(lua_State *L, GDExtensionObjectPtr object, const Method &method, int first, int argc) {
 	if (method.bind == nullptr) {
 		lua_pushstring(L, "method has no bind");
 		return false;
+	}
+	if (fast_call(L, object, method, first, argc)) {
+		return true;
 	}
 	const MethodInfo *info = method.info;
 	if (method.ptrcall && argc == info->argc) {
@@ -462,8 +533,8 @@ static bool generic_call(lua_State *L, GDExtensionObjectPtr object, const String
 	return true;
 }
 
-// Getters and setters of the common types skip call_method's generic
-// marshalling (docs/adr/0006)
+// Property accessors keep their own, narrower fast paths: routing them
+// through fast_call measured ~3 ns slower per access (docs/adr/0012)
 static bool fast_get(lua_State *L, GDExtensionObjectPtr object, const Method &getter) {
 	if (!getter.ptrcall) {
 		return false;
@@ -508,12 +579,7 @@ static bool fast_set(lua_State *L, GDExtensionObjectPtr object, const Method &se
 	if (!setter.ptrcall) {
 		return false;
 	}
-	union {
-		float v[3];
-		double d;
-		int64_t i;
-		GDExtensionBool b;
-	} value;
+	SimpleValue value;
 	switch (setter.info->args[0]) {
 		case T_VECTOR2:
 		case T_VECTOR3: {
@@ -575,20 +641,28 @@ struct ObjectBox {
 	GDExtensionObjectPtr object;
 	uint64_t id;
 	ClassInfo *cls;
+	// Whether the object can be freed while this box holds it: not for
+	// RefCounted objects (`ref` holds a reference) or singletons. Like
+	// GDScript, only those skip the ObjectDB lookup (docs/adr/0013).
+	bool can_be_freed;
 };
 
-static GDExtensionObjectPtr checked_object(lua_State *L, int index) {
+// The object box at `index` (null if it isn't one); errors if its object
+// was freed
+static ObjectBox *checked_box(lua_State *L, int index) {
 	ObjectBox *box = (ObjectBox *)lua_touserdatatagged(L, index, TAG_OBJECT);
-	if (box == nullptr) {
-		return nullptr;
-	}
-	if (gdextension_interface::object_get_instance_from_id(box->id) != box->object) {
+	if (box && box->can_be_freed && gdextension_interface::object_get_instance_from_id(box->id) != box->object) {
 		luaL_error(L, "attempt to use a freed object");
 	}
-	return box->object;
+	return box;
 }
 
-void push_object(lua_State *L, GDExtensionObjectPtr object) {
+static GDExtensionObjectPtr checked_object(lua_State *L, int index) {
+	ObjectBox *box = checked_box(L, index);
+	return box ? box->object : nullptr;
+}
+
+void push_object(lua_State *L, GDExtensionObjectPtr object, bool never_freed) {
 	if (object == nullptr) {
 		lua_pushnil(L);
 		return;
@@ -603,6 +677,7 @@ void push_object(lua_State *L, GDExtensionObjectPtr object) {
 	box->object = object;
 	box->id = gdextension_interface::object_get_instance_id(object);
 	box->cls = class_info_of(object);
+	box->can_be_freed = !never_freed && !box->cls->is_ref_counted;
 }
 
 GDExtensionObjectPtr to_object(lua_State *L, int index) {
@@ -619,8 +694,8 @@ GDExtensionObjectPtr to_object(lua_State *L, int index) {
 static int object_namecall(lua_State *L) {
 	int atom = -1;
 	const char *name = lua_namecallatom(L, &atom);
-	GDExtensionObjectPtr object = checked_object(L, 1);
-	ObjectBox *box = (ObjectBox *)lua_touserdatatagged(L, 1, TAG_OBJECT);
+	ObjectBox *box = checked_box(L, 1);
+	GDExtensionObjectPtr object = box->object;
 	const Member &member = atom >= 0 ? box->cls->member(atom) : box->cls->member(StringName(name));
 	bool ok;
 	if (member.kind == MemberKind::METHOD && member.method.bind) {
@@ -653,8 +728,8 @@ void push_member_method(lua_State *L, const Member &member) {
 }
 
 static int object_index(lua_State *L) {
-	GDExtensionObjectPtr object = checked_object(L, 1);
-	ObjectBox *box = (ObjectBox *)lua_touserdatatagged(L, 1, TAG_OBJECT);
+	ObjectBox *box = checked_box(L, 1);
+	GDExtensionObjectPtr object = box->object;
 	int atom = string_atom(L, 2);
 	if (lua_type(L, 2) != LUA_TSTRING) {
 		lua_pushnil(L);
@@ -675,8 +750,8 @@ static int object_index(lua_State *L) {
 }
 
 static int object_newindex(lua_State *L) {
-	GDExtensionObjectPtr object = checked_object(L, 1);
-	ObjectBox *box = (ObjectBox *)lua_touserdatatagged(L, 1, TAG_OBJECT);
+	ObjectBox *box = checked_box(L, 1);
+	GDExtensionObjectPtr object = box->object;
 	int atom = string_atom(L, 2);
 	const Member &member = atom >= 0 ? box->cls->member(atom) : box->cls->member(string_name_at(L, 2));
 	if (member.kind == MemberKind::PROPERTY) {
@@ -1002,7 +1077,7 @@ static int globals_index(lua_State *L) {
 	}
 	StringName name = string_name_at(L, 2);
 	if (Engine::get_singleton()->has_singleton(name)) {
-		push_object(L, gdextension_interface::global_get_singleton(name._native_ptr()));
+		push_object(L, gdextension_interface::global_get_singleton(name._native_ptr()), true);
 	} else if (ClassDB::class_exists(name)) {
 		// An engine class: a table with `new`
 		lua_newtable(L);

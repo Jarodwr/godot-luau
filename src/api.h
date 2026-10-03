@@ -71,6 +71,7 @@ struct Member {
 // Per engine class: members indexed by atom, resolved on first use
 struct ClassInfo {
 	StringName name;
+	bool is_ref_counted = false;
 	std::vector<Member *> by_atom;
 	godot::HashMap<StringName, Member *> by_name;  // names without atoms
 	const Member &member(int atom);
@@ -100,7 +101,8 @@ Variant to_variant(lua_State *L, int index);
 // which swaps byte by byte out of line (docs/adr/0002).
 void to_variant_into_nil(lua_State *L, int index, Variant *r_dest);
 // Pushes an engine object as Luau userdata (or the script's self table)
-void push_object(lua_State *L, GDExtensionObjectPtr object);
+// `never_freed`: engine singletons, which live until shutdown
+void push_object(lua_State *L, GDExtensionObjectPtr object, bool never_freed = false);
 // The engine object of the value at `index` (object userdata or self table),
 // or null
 GDExtensionObjectPtr to_object(lua_State *L, int index);

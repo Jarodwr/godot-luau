@@ -45,15 +45,15 @@ All checksums match GDScript.
 | Case | GDScript | godot-luau |
 |---|---:|---:|
 | Bare call into a script (`call_noop`) | 38 | 36 |
-| Two ints in, one out (`call_add2`) | 60 | 53 |
-| Script field read+write (`api_dynamic_field`) | 6.8 | 5.2 |
-| Own method via `self` (`api_self_method`) | 53 | 8.6 |
-| Engine property read (`api_object_prop_get`) | 19 | 32 |
-| Engine property write (`api_object_prop_set`) | 27 | 39 |
-| Engine method + string method (`api_object_method`) | 18 | 43 |
-| Singleton method (`api_singleton_call`) | 13 | 20 |
-| Two Vector2 operations (`api_vector2_math`) | 9.1 | 1.9 |
-| `_process` per node, 20,000 movers | 145 | 151 (Fennel: 146 vs 151) |
+| Two ints in, one out (`call_add2`) | 61 | 54 |
+| Script field read+write (`api_dynamic_field`) | 6.8 | 5.1 |
+| Own method via `self` (`api_self_method`) | 53 | 8.7 |
+| Engine property read (`api_object_prop_get`) | 20 | 27 |
+| Engine property write (`api_object_prop_set`) | 27 | 33 |
+| Engine method + string method (`api_object_method`) | 18 | 42 |
+| Singleton method (`api_singleton_call`) | 13 | 15 |
+| Two Vector2 operations (`api_vector2_math`) | 8.9 | 1.9 |
+| `_process` per node, 20,000 movers | 144 | 148 (Fennel: 120 vs 122) |
 
 Engine property access is the remaining gap: `self.position` misses two Luau
 tables before reaching C ([0010](docs/adr/0010-self-stays-a-table.md)).
@@ -65,6 +65,11 @@ GODOT_BIN=/path/to/godot tools/bench.sh /tmp/run.json --repeats=9
 ```
 
 To profile, build the `profile` preset (same optimisation, with symbols).
+`demo/checks.gd` checks object lifetimes (freed nodes, RefCounted, singletons):
+
+```sh
+cd demo && "$GODOT_BIN" --headless --path . --script checks.gd
+```
 
 ## Scripts
 

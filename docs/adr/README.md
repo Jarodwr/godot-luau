@@ -34,3 +34,7 @@ at the same optimisation level.
 | [0008](0008-luau-compiler-options.md) | Compile scripts with optimisation level 2 and vector constructors | Accepted |
 | [0009](0009-native-code-generation.md) | Try Luau native code generation | Rejected |
 | [0010](0010-self-stays-a-table.md) | `self` stays a plain Luau table | Accepted |
+| [0011](0011-instance-handle-upvalue.md) | Self-table miss handlers find their instance through an upvalue | Accepted |
+| [0012](0012-simple-call-fast-path.md) | Direct path for simple engine method calls | Accepted |
+| [0013](0013-skip-freed-checks-that-cannot-fail.md) | Skip freed-object checks for objects that can't be freed | Accepted |
+| [0014](0014-no-fennel-specific-optimisations.md) | No Fennel-specific optimisations | Accepted |

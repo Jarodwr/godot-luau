@@ -1,20 +1,20 @@
 {
 	"cases": {
 		"process_nodes": {
-			"baseline_ns": 0.0333333333333333,
+			"baseline_ns": 0.0391666666666667,
 			"check": "ok",
 			"desc": "n nodes moving in _process; ns per node per frame",
-			"fennel_min_ns": 135.7375,
-			"fennel_ns": 146.314166666667,
-			"gdscript_min_ns": 137.4425,
-			"gdscript_ns": 151.091666666667,
+			"fennel_min_ns": 112.8975,
+			"fennel_ns": 120.325,
+			"gdscript_min_ns": 114.101666666667,
+			"gdscript_ns": 121.704166666667,
 			"group": "frame",
 			"kind": "frame",
 			"n": 20000,
 			"ops": 1200000.0
 		}
 	},
-	"date": "2026-10-03T10:41:28",
+	"date": "2026-10-03T10:59:22",
 	"godot_version": "4.7.2-stable (official)",
 	"repeats": 9,
 	"runtime": "luau",
