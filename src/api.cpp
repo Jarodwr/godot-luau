@@ -1,5 +1,6 @@
 #include "api.h"
 
+#include "builtins.h"
 #include "internal.h"
 #include "script.h"
 
@@ -445,18 +446,14 @@ static bool call_variant(lua_State *L, GDExtensionObjectPtr object, GDExtensionM
 	}
 	VariantResult result;
 	GDExtensionCallError error;
-	{
-		VariantArgs args;
-		for (int i = 0; i < argc; i++) {
-			args.add(L, first + i);
-		}
-		gdextension_interface::object_method_bind_call(bind, object, args.pointers(), argc, result.uninitialized(), &error);
-	}
+	call_with_vector_retry(L, first, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
+		gdextension_interface::object_method_bind_call(bind, object, args.pointers(), argc, r.uninitialized(), &e);
+	});
 	if (error.error != GDEXTENSION_CALL_OK) {
 		push_call_error(L, method, error);
 		return false;
 	}
-	push_variant(L, result.get());
+	push_result(L, result);
 	return true;
 }
 
@@ -604,19 +601,15 @@ static bool generic_call(lua_State *L, Variant &object, const StringName &name, 
 	}
 	VariantResult result;
 	GDExtensionCallError error;
-	{
-		VariantArgs args;
-		for (int i = 0; i < argc; i++) {
-			args.add(L, first + i);
-		}
-		gdextension_interface::variant_call(object._native_ptr(), name._native_ptr(), args.pointers(), argc, result.uninitialized(), &error);
-	}
+	call_with_vector_retry(L, first, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
+		gdextension_interface::variant_call(object._native_ptr(), name._native_ptr(), args.pointers(), argc, r.uninitialized(), &e);
+	});
 	if (error.error != GDEXTENSION_CALL_OK) {
 		CharString n = String(name).utf8();
 		lua_pushfstring(L, "error %d calling '%s'", (int)error.error, n.get_data());
 		return false;
 	}
-	push_variant(L, result.get());
+	push_result(L, result);
 	return true;
 }
 
@@ -889,6 +882,57 @@ static int object_tostring(lua_State *L) {
 
 // ---------------------------------------------------------------- other Variants
 
+const Variant *borrow_variant(lua_State *L, int index) {
+	if (lua_type(L, index) != LUA_TUSERDATA) {
+		return nullptr;
+	}
+	if (Variant *value = (Variant *)lua_touserdatatagged(L, index, TAG_VARIANT)) {
+		return value;
+	}
+	if (ObjectBox *box = checked_box(L, index)) {
+		return &box->ref;
+	}
+	return nullptr;
+}
+
+bool has_flat_vector(lua_State *L, int first, int count) {
+	for (int i = 0; i < count; i++) {
+		const float *v = lua_tovector(L, first + i);
+		if (v && v[2] == 0.0f) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void push_result(lua_State *L, VariantResult &result) {
+	if (!result.constructed) {
+		lua_pushnil(L);
+		return;
+	}
+	Variant &value = result.get();
+	if (push_plain_variant(L, value)) {
+		result.reset();
+		return;
+	}
+	switch (type_of(value)) {
+		case Variant::STRING_NAME:
+		case Variant::OBJECT:
+		case Variant::CALLABLE:
+			push_variant(L, value);  // become Lua values or need special handling
+			result.reset();
+			return;
+		default: {
+			// Userdata: move the bytes in (Variants relocate like godot-cpp's
+			// own move), leaving nothing to destroy in the result
+			Variant *box = (Variant *)lua_newuserdatataggedwithmetatable(L, sizeof(Variant), TAG_VARIANT);
+			memcpy((void *)box, result.storage, sizeof(Variant));
+			result.constructed = false;
+			return;
+		}
+	}
+}
+
 void push_variant_userdata(lua_State *L, const Variant &value) {
 	Variant *box = (Variant *)lua_newuserdatataggedwithmetatable(L, sizeof(Variant), TAG_VARIANT);
 	new (box) Variant(value);
@@ -949,6 +993,13 @@ static int variant_index(lua_State *L) {
 static int variant_newindex(lua_State *L) {
 	Variant *self = (Variant *)lua_touserdatatagged(L, 1, TAG_VARIANT);
 	Variant::Type type = type_of(*self);
+	// Builtin values (Color, Rect2, Transform2D…) are values: a Lua variable
+	// holding one may share it with others (constants like Color.RED, table
+	// fields), so changing it in place would change them all. Only reference
+	// types (arrays, dictionaries) take writes. docs/adr/0024
+	if (!is_indexed_type(type) && type != Variant::DICTIONARY) {
+		luaL_error(L, "builtin values can't be modified in place; build a new one (e.g. Color(r, g, b))");
+	}
 	GDExtensionBool valid = false;
 	{
 		VariantArgs args;
@@ -985,16 +1036,12 @@ static int variant_namecall(lua_State *L) {
 	{
 		VariantResult result;
 		GDExtensionCallError error;
-		{
-			VariantArgs args;
-			for (int i = 0; i < argc; i++) {
-				args.add(L, 2 + i);
-			}
-			gdextension_interface::variant_call(self->_native_ptr(), method._native_ptr(), args.pointers(), argc, result.uninitialized(), &error);
-		}
+		call_with_vector_retry(L, 2, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
+			gdextension_interface::variant_call(self->_native_ptr(), method._native_ptr(), args.pointers(), argc, r.uninitialized(), &e);
+		});
 		ok = error.error == GDEXTENSION_CALL_OK;
 		if (ok) {
-			push_variant(L, result.get());
+			push_result(L, result);
 		} else {
 			CharString n = String(method).utf8();
 			lua_pushfstring(L, "error %d calling '%s'", (int)error.error, n.get_data());
@@ -1007,17 +1054,32 @@ static int variant_namecall(lua_State *L) {
 	return 1;
 }
 
+// Operands of Godot values are used in place; the result is moved into the
+// new userdata (docs/adr/0024)
 template <Variant::Operator OP>
 static int variant_operator(lua_State *L) {
-	Variant a = to_variant(L, 1);
-	Variant b = to_variant(L, 2);
-	Variant result;
-	bool valid;
-	Variant::evaluate(OP, a, b, result, valid);
+	GDExtensionBool valid = false;
+	{
+		VariantResult result;
+		// A vector with z = 0 is a Vector2 first, then a Vector3 if that's
+		// not a valid operation (Transform3D * Vector3(1, 0, 0))
+		for (int attempt = 0; attempt < 2 && !valid; attempt++) {
+			if (attempt == 1 && !has_flat_vector(L, 1, 2)) {
+				break;
+			}
+			VariantArgs operands;
+			operands.vectors_as_3 = attempt == 1;
+			operands.add(L, 1);
+			operands.add(L, 2);
+			gdextension_interface::variant_evaluate((GDExtensionVariantOperator)OP, operands.argv[0]->_native_ptr(), operands.argv[1]->_native_ptr(), result.uninitialized(), &valid);
+		}
+		if (valid) {
+			push_result(L, result);
+		}
+	}
 	if (!valid) {
 		luaL_error(L, "invalid operands");
 	}
-	push_variant(L, result);
 	return 1;
 }
 
@@ -1107,7 +1169,7 @@ bool push_plain_variant(lua_State *L, const Variant &value) {
 
 // Writes the value at `index` as a plain Variant into uninitialized `memory`;
 // false (nothing written) if it isn't one
-bool write_plain_variant(lua_State *L, int index, void *memory) {
+bool write_plain_variant(lua_State *L, int index, void *memory, bool vectors_as_3) {
 	if (!variant_bytes_ok) {
 		return false;
 	}
@@ -1143,7 +1205,7 @@ bool write_plain_variant(lua_State *L, int index, void *memory) {
 			float *out = reinterpret_cast<float *>(data);
 			out[0] = v[0];
 			out[1] = v[1];
-			if (v[2] == 0.0f) {
+			if (v[2] == 0.0f && !vectors_as_3) {
 				type = Variant::VECTOR2;
 			} else {
 				type = Variant::VECTOR3;
@@ -1230,6 +1292,9 @@ Variant to_variant(lua_State *L, int index) {
 		}
 		case LUA_TTABLE: {
 			GDExtensionObjectPtr object = self_table_owner(L, index);
+			if (object == nullptr) {
+				return table_aware_to_variant(L, index, 0);  // docs/adr/0027
+			}
 			if (object) {
 				Variant result;
 				static GDExtensionVariantFromTypeConstructorFunc from_object = gdextension_interface::get_variant_from_type_constructor(GDEXTENSION_VARIANT_TYPE_OBJECT);
@@ -1258,15 +1323,7 @@ void to_variant_into_nil(lua_State *L, int index, Variant *r_dest) {
 
 // ---------------------------------------------------------------- globals
 
-static int vector2_new(lua_State *L) {
-	lua_pushvector(L, (float)luaL_optnumber(L, 1, 0), (float)luaL_optnumber(L, 2, 0), 0.0f);
-	return 1;
-}
 
-static int vector3_new(lua_State *L) {
-	lua_pushvector(L, (float)luaL_optnumber(L, 1, 0), (float)luaL_optnumber(L, 2, 0), (float)luaL_optnumber(L, 3, 0));
-	return 1;
-}
 
 static int print(lua_State *L) {
 	String line;
@@ -1292,12 +1349,6 @@ static int string_length(lua_State *L) {
 	return 1;
 }
 
-static int class_new(lua_State *L) {
-	ClassInfo *cls = (ClassInfo *)lua_tolightuserdata(L, lua_upvalueindex(1));
-	GDExtensionObjectPtr object = gdextension_interface::classdb_construct_object2(cls->name._native_ptr());
-	push_object(L, object, false, true);
-	return 1;
-}
 
 // Globals not defined by scripts: engine singletons (Engine, OS, Input…)
 static int globals_index(lua_State *L) {
@@ -1308,12 +1359,8 @@ static int globals_index(lua_State *L) {
 	if (Engine::get_singleton()->has_singleton(name)) {
 		push_object(L, gdextension_interface::global_get_singleton(name._native_ptr()), true);
 	} else if (ClassDB::class_exists(name)) {
-		// An engine class: a table with `new`
-		lua_newtable(L);
-		lua_pushlightuserdata(L, class_info(name));
-		lua_pushcclosurek(L, class_new, "new", 1, nullptr);
-		lua_setfield(L, -2, "new");
-	} else {
+		push_class_table(L, class_info(name));  // `new` and constants
+	} else if (!push_builtin_global(L, lua_tostring(L, 2))) {  // utilities, global enums
 		return 0;
 	}
 	lua_pushvalue(L, 2);
@@ -1369,10 +1416,6 @@ void register_globals(lua_State *L) {
 	lua_setuserdatametatable(L, TAG_VARIANT);
 	lua_setuserdatadtor(L, TAG_VARIANT, [](lua_State *, void *p) { ((Variant *)p)->~Variant(); });
 
-	lua_pushcfunction(L, vector2_new, "Vector2");
-	lua_setglobal(L, "Vector2");
-	lua_pushcfunction(L, vector3_new, "Vector3");
-	lua_setglobal(L, "Vector3");
 	lua_pushcfunction(L, print, "print");
 	lua_setglobal(L, "print");
 
@@ -1380,6 +1423,8 @@ void register_globals(lua_State *L) {
 	lua_pushcfunction(L, string_length, "length");
 	lua_setfield(L, -2, "length");
 	lua_pop(L, 1);
+
+	register_builtins(L);
 
 	lua_pushvalue(L, LUA_GLOBALSINDEX);
 	lua_newtable(L);
@@ -1517,6 +1562,7 @@ void open_state() {
 }
 
 void close_state() {
+	clear_builtins();
 	name_strings.clear();
 	node_paths.clear();
 	if (L_main) {

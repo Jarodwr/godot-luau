@@ -24,6 +24,9 @@ set(API_JSON "${CMAKE_CURRENT_SOURCE_DIR}/lib/godot-cpp/gdextension/extension_ap
 set(API_DATA "${CMAKE_CURRENT_BINARY_DIR}/gen/api_data.inc")
 add_custom_command(
     OUTPUT "${API_DATA}"
+        "${CMAKE_CURRENT_BINARY_DIR}/gen/utility_data.inc"
+        "${CMAKE_CURRENT_BINARY_DIR}/gen/global_enum_data.inc"
+        "${CMAKE_CURRENT_BINARY_DIR}/gen/builtin_data.inc"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_api_data.py" "${API_JSON}" "${API_DATA}"
     DEPENDS "${API_JSON}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_api_data.py"
 )

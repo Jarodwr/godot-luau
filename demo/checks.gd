@@ -55,6 +55,15 @@ func _initialize() -> void:
 	check(a.lua_length("✓") == 3, "Lua sees UTF-8 bytes")
 	check(a.echo(&"sname") == "sname", "StringName argument arrives as a string")
 
+	# API surface (ADRs 0024-0027)
+	var api = a.api_checks()
+	if not api is Dictionary:
+		api = {}
+	if api.is_empty():
+		check(false, "api_checks ran")
+	for key in api:
+		check(api[key], "API: " + str(key))
+
 	a.free()
 	print("failures: ", failures)
 	quit(failures)
