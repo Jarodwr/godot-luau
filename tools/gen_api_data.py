@@ -14,23 +14,33 @@ CODES = {
     "String": "T_STRING", "StringName": "T_STRING_NAME",
     "Vector2": "T_VECTOR2", "Vector2i": "T_VECTOR2I", "Vector3": "T_VECTOR3",
     "Vector3i": "T_VECTOR3I", "Rect2": "T_RECT2", "Color": "T_COLOR",
-    "Variant": "T_VARIANT",
+    "Variant": "T_VARIANT", "NodePath": "T_NODE_PATH",
 }
 
 
-def code(type_name, is_object):
+def code(type_name, is_object, ref_counted=False):
     if type_name.startswith("enum::") or type_name.startswith("bitfield::"):
         return "T_INT"
     if type_name in CODES:
         return CODES[type_name]
     if is_object:
-        return "T_OBJECT"
+        # Results of RefCounted classes (and plain Object, which may be one)
+        # need reference handling: they keep the Variant route
+        return "T_OBJECT_REF" if ref_counted or type_name == "Object" else "T_OBJECT"
     return "T_OTHER"
 
 
 def main(api_path, out_path):
     api = json.load(open(api_path))
     classes = {c["name"] for c in api["classes"]}
+    parents = {c["name"]: c.get("inherits", "") for c in api["classes"]}
+
+    def is_ref_counted(name):
+        while name:
+            if name == "RefCounted":
+                return True
+            name = parents.get(name, "")
+        return False
     rows = []
     for cls in api["classes"]:
         for method in cls.get("methods", []):
@@ -48,8 +58,8 @@ def main(api_path, out_path):
             if len(args) > 8:
                 flags.append("F_OTHER")  # more than the fast path handles
                 args = args[:8]
-            arg_codes = ", ".join(code(a, a in classes) for a in args) or "T_VOID"
-            rows.append((cls["name"], method["name"], method["hash"], code(ret, ret in classes),
+            arg_codes = ", ".join(code(a, a in classes, is_ref_counted(a)) for a in args) or "T_VOID"
+            rows.append((cls["name"], method["name"], method["hash"], code(ret, ret in classes, is_ref_counted(ret)),
                          len(method.get("arguments", [])), arg_codes, " | ".join(flags) or "0"))
     rows.sort(key=lambda r: (r[0], r[1]))
     with open(out_path, "w") as out:

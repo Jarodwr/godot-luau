@@ -35,7 +35,9 @@ int string_atom(lua_State *L, int index);
 enum ArgType : uint8_t {
 	T_VOID, T_BOOL, T_INT, T_FLOAT, T_STRING, T_STRING_NAME,
 	T_VECTOR2, T_VECTOR2I, T_VECTOR3, T_VECTOR3I, T_RECT2, T_COLOR,
-	T_OBJECT, T_VARIANT, T_OTHER,
+	T_OBJECT,      // an object of a class that isn't RefCounted
+	T_OBJECT_REF,  // a RefCounted object (or plain Object, which may be one)
+	T_VARIANT, T_NODE_PATH, T_OTHER,
 };
 enum MethodFlags : uint8_t { F_VARARG = 1, F_STATIC = 2, F_DEFAULTS = 4, F_OTHER = 8 };
 constexpr int MAX_FAST_ARGS = 8;

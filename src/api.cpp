@@ -6,6 +6,7 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/godot.hpp>
 #include <godot_cpp/templates/hash_map.hpp>
+#include <godot_cpp/variant/node_path.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/vector2.hpp>
 #include <godot_cpp/variant/vector3.hpp>
@@ -103,9 +104,10 @@ static bool native_ret(ArgType t) {
 	switch (t) {
 		case T_VOID: case T_BOOL: case T_INT: case T_FLOAT: case T_STRING:
 		case T_STRING_NAME: case T_VECTOR2: case T_VECTOR3: case T_VARIANT:
+		case T_OBJECT:  // a plain pointer for non-RefCounted classes (docs/adr/0017)
 			return true;
 		default:
-			return false;  // objects (refcounts), integer vectors, Rect2, Color… use call
+			return false;  // RefCounted results, NodePath, integer vectors, Rect2, Color… use call
 	}
 }
 
@@ -220,13 +222,31 @@ struct NativeSlot {
 			case T_STRING: reinterpret_cast<String *>(bytes)->~String(); break;
 			case T_STRING_NAME: reinterpret_cast<StringName *>(bytes)->~StringName(); break;
 			case T_VARIANT: reinterpret_cast<Variant *>(bytes)->~Variant(); break;
+			case T_NODE_PATH: reinterpret_cast<NodePath *>(bytes)->~NodePath(); break;
 			default: break;
 		}
 	}
 };
 
-// Writes the Luau value at `index` as `type`; false if it doesn't fit
-static bool to_native(lua_State *L, int index, ArgType type, NativeSlot &slot) {
+// NodePaths for strings used as path arguments, by atom (docs/adr/0017)
+static HashMap<int, NodePath> node_paths;
+constexpr int MAX_NODE_PATHS = 4096;
+
+// The cached NodePath for an atom, or null if the cache is full (entries are
+// never evicted while the state lives: arguments point at them)
+static const NodePath *node_path_for_atom(int atom) {
+	if (const NodePath *path = node_paths.getptr(atom)) {
+		return path;
+	}
+	if (node_paths.size() >= MAX_NODE_PATHS) {
+		return nullptr;
+	}
+	return &node_paths.insert(atom, NodePath(String(atom_name(atom))))->value;
+}
+
+// Writes the Luau value at `index` as `type` into `slot`, or points `arg_ptr`
+// at a cached value; false if it doesn't fit
+static bool to_native(lua_State *L, int index, ArgType type, NativeSlot &slot, GDExtensionConstTypePtr &arg_ptr) {
 	switch (type) {
 		case T_BOOL:
 			*reinterpret_cast<GDExtensionBool *>(slot.bytes) = lua_toboolean(L, index);
@@ -268,7 +288,21 @@ static bool to_native(lua_State *L, int index, ArgType type, NativeSlot &slot) {
 			}
 			return true;
 		}
-		case T_OBJECT: {
+		case T_NODE_PATH: {
+			if (lua_type(L, index) != LUA_TSTRING) return false;
+			int atom = string_atom(L, index);
+			if (const NodePath *cached = atom >= 0 ? node_path_for_atom(atom) : nullptr) {
+				arg_ptr = cached;  // nothing to construct (docs/adr/0017)
+				return true;
+			}
+			size_t length;
+			const char *s = lua_tolstring(L, index, &length);
+			new (slot.bytes) NodePath(String::utf8(s, (int)length));
+			slot.constructed = T_NODE_PATH;
+			return true;
+		}
+		case T_OBJECT:
+		case T_OBJECT_REF: {
 			GDExtensionObjectPtr object = lua_isnil(L, index) ? nullptr : to_object(L, index);
 			if (object == nullptr && !lua_isnil(L, index)) return false;
 			*reinterpret_cast<GDExtensionObjectPtr *>(slot.bytes) = object;
@@ -292,6 +326,7 @@ static bool to_native(lua_State *L, int index, ArgType type, NativeSlot &slot) {
 
 static void prepare_return(ArgType type, NativeSlot &slot) {
 	switch (type) {
+		case T_OBJECT: *reinterpret_cast<GDExtensionObjectPtr *>(slot.bytes) = nullptr; break;
 		case T_STRING: new (slot.bytes) String(); slot.constructed = T_STRING; break;
 		case T_STRING_NAME:
 			// Zeroed bytes are an empty StringName (null data): no constructor call
@@ -348,6 +383,7 @@ static void push_native(lua_State *L, ArgType type, NativeSlot &slot) {
 			break;
 		}
 		case T_VARIANT: push_variant(L, *reinterpret_cast<Variant *>(slot.bytes)); break;
+		case T_OBJECT: push_object(L, *reinterpret_cast<GDExtensionObjectPtr *>(slot.bytes)); break;
 		default: lua_pushnil(L); break;
 	}
 }
@@ -521,8 +557,8 @@ bool call_method(lua_State *L, GDExtensionObjectPtr object, const Method &method
 		GDExtensionConstTypePtr argv[MAX_FAST_ARGS];
 		bool ok = true;
 		for (int i = 0; i < argc && ok; i++) {
-			ok = to_native(L, first + i, info->args[i], slots[i]);
 			argv[i] = slots[i].bytes;
+			ok = to_native(L, first + i, info->args[i], slots[i], argv[i]);
 		}
 		if (ok) {
 			NativeSlot ret;
@@ -1400,6 +1436,7 @@ void open_state() {
 
 void close_state() {
 	name_strings.clear();
+	node_paths.clear();
 	if (L_main) {
 		lua_close(L_main);
 		L_main = nullptr;
