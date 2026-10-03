@@ -72,6 +72,19 @@ const CASES := [
 	{"name": "signal_into_script", "kind": "boundary", "n": 100000, "group": "boundary", "desc": "emit a GDScript signal connected to a script method"},
 	{"name": "new_instance", "kind": "boundary", "n": 20000, "group": "boundary", "desc": "script.new() + free() of a Node2D script"},
 
+	# Edge cases (godot-luau)
+	{"name": "api_get_node", "kind": "inner", "n": 100000, "group": "api", "desc": "get_node(\"Child\"): NodePath argument, object result"},
+	{"name": "api_object_return", "kind": "inner", "n": 100000, "group": "api", "desc": "get_parent(): object result"},
+	{"name": "api_other_prop_get", "kind": "inner", "n": 100000, "group": "api", "desc": "read child.position.x on another node"},
+	{"name": "api_other_method", "kind": "inner", "n": 100000, "group": "api", "desc": "child.is_visible() on another node"},
+	{"name": "api_peer_call", "kind": "inner", "n": 100000, "group": "api", "desc": "call a method on another node with a same-language script"},
+	{"name": "api_gdscript_call", "kind": "inner", "n": 100000, "group": "api", "desc": "call a method on a GDScript object"},
+	{"name": "api_string_arg", "kind": "inner", "n": 100000, "group": "api", "desc": "has_method(\"helper\"): string argument to the engine"},
+	{"name": "api_node_create", "kind": "inner", "n": 30000, "group": "api", "desc": "Node.new() + free()"},
+	{"name": "api_color_math", "kind": "inner", "n": 100000, "group": "api", "desc": "c = c + step * 0.5 on Color"},
+	{"name": "api_transform_xform", "kind": "inner", "n": 100000, "group": "api", "desc": "(Transform2D * Vector2).x"},
+	{"name": "api_array_table_in", "kind": "inner", "n": 100000, "group": "api", "desc": "build a 3-element Array literal, size()"},
+
 	# Per frame
 	{"name": "process_nodes", "kind": "frame", "n": 20000, "group": "frame", "desc": "n nodes moving in _process; ns per node per frame"},
 ]
@@ -80,7 +93,7 @@ const CASES := [
 # CPU slows down between them, and results varied by 3x between runs.
 const FRAME_COUNT := 60
 
-# Cases godot-luau implements (cases/luau_bench.luau)
+# (unused) cases godot-luau implemented before every case was probed
 const SUPPORTED := ["vm_fib", "vm_loop_arith", "vm_function_calls", "api_vector2_math", "api_vector2_field",
 	"api_object_method", "api_object_prop_get", "api_object_prop_set", "api_dynamic_field", "api_singleton_call",
 	"api_self_method", "call_noop", "call_add2", "echo_int", "echo_float", "echo_vector2", "process_nodes"]
@@ -123,6 +136,21 @@ func run() -> void:
 	fnl_obj.name = "BenchFN"
 	root.add_child(gd_obj)
 	root.add_child(fnl_obj)
+	# Fixtures for the edge cases: a child Node2D, a same-language peer and a
+	# GDScript object under each bench node
+	for pair in [[gd_obj, "res://cases/peer.gd"], [fnl_obj, "res://cases/peer.luau"]]:
+		var child := Node2D.new()
+		child.name = "Child"
+		child.position = Vector2(3, 4)
+		pair[0].add_child(child)
+		var peer := Node.new()
+		peer.name = "Peer"
+		peer.set_script(load(pair[1]))
+		pair[0].add_child(peer)
+		var gdhelper := Node.new()
+		gdhelper.name = "GDHelper"
+		gdhelper.set_script(load("res://cases/peer.gd"))
+		pair[0].add_child(gdhelper)
 	await process_frame
 
 	var runtime := "luau"
@@ -131,12 +159,15 @@ func run() -> void:
 
 	var results := {}
 	for case in CASES:
-		if not case.name in SUPPORTED:
-			continue
 		if not only.is_empty() and not case.name.contains(only):
 			continue
 		var n: int = maxi(1, int(case.n * scale)) if case.name != "vm_fib" else int(case.n)
 		var entry: Dictionary
+		var probe := probe_case(case)
+		if probe != "":
+			results[case.name] = {"group": case.group, "kind": case.kind, "desc": case.desc, "gdscript_ns": 0.0, "fennel_ns": 0.0, "check": probe}
+			print("%-24s %14s %14s %8s  %s" % [case.name, "-", "-", "-", probe])
+			continue
 		if case.kind == "frame":
 			entry = await run_frame_case(case, n)
 		else:
@@ -158,6 +189,31 @@ func run() -> void:
 	f.close()
 	print("Wrote ", ProjectSettings.globalize_path(out_path))
 	quit()
+
+
+# Runs the Luau side once with a tiny n: "" if it matches GDScript, else why
+# not (a missing feature shows up here instead of erroring n times)
+func probe_case(case: Dictionary) -> String:
+	if case.kind == "frame":
+		return ""
+	var gd_result: Variant = time_case_once(case, gd_obj, 3)
+	var fnl_result: Variant = time_case_once(case, fnl_obj, 3)
+	var check := check_results(gd_result, fnl_result)
+	if check != "ok" and check != "-":
+		return "UNSUPPORTED (" + check + ")"
+	return ""
+
+
+func time_case_once(case: Dictionary, obj: Object, n: int) -> Variant:
+	var arg: Variant = n
+	if case.kind == "array":
+		var arr := []
+		for i in range(1, n + 1):
+			arr.append(i)
+		arg = arr
+	if case.kind == "boundary":
+		return call("b_" + case.name, obj, n)
+	return obj.call("bench_" + case.name, arg)
 
 
 func run_case(case: Dictionary, n: int) -> Dictionary:

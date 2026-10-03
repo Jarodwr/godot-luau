@@ -278,3 +278,94 @@ func bench_api_async_method_call(n: int) -> int:
 		async_noop()
 		s += 1
 	return s
+
+
+# --- Edge cases (godot-luau): other nodes, object returns, more types ---------
+
+func bench_api_get_node(n: int) -> int:
+	var s := 0
+	for i in range(1, n + 1):
+		if get_node("Child"):
+			s += 1
+	return s
+
+
+func bench_api_object_return(n: int) -> int:
+	var s := 0
+	for i in range(1, n + 1):
+		if get_parent():
+			s += 1
+	return s
+
+
+func bench_api_other_prop_get(n: int) -> float:
+	var c: Node2D = get_node("Child")
+	var s := 0.0
+	for i in range(1, n + 1):
+		s += c.position.x
+	return s
+
+
+func bench_api_other_method(n: int) -> int:
+	var c: Node2D = get_node("Child")
+	var s := 0
+	for i in range(1, n + 1):
+		if c.is_visible():
+			s += 1
+	return s
+
+
+func bench_api_peer_call(n: int) -> int:
+	var p = get_node("Peer")
+	var s := 0
+	for i in range(1, n + 1):
+		s += p.helper(i)
+	return s
+
+
+func bench_api_gdscript_call(n: int) -> int:
+	var p = get_node("GDHelper")
+	var s := 0
+	for i in range(1, n + 1):
+		s += p.helper(i)
+	return s
+
+
+func bench_api_string_arg(n: int) -> int:
+	var s := 0
+	for i in range(1, n + 1):
+		if has_method("helper"):
+			s += 1
+	return s
+
+
+func bench_api_node_create(n: int) -> int:
+	var s := 0
+	for i in range(1, n + 1):
+		var node := Node.new()
+		node.free()
+		s += 1
+	return s
+
+
+func bench_api_color_math(n: int) -> float:
+	var c := Color(0, 0, 0)
+	var step := Color(0.001, 0.002, 0.003)
+	for i in range(1, n + 1):
+		c = c + step * 0.5
+	return snappedf(c.r, 0.001)
+
+
+func bench_api_transform_xform(n: int) -> float:
+	var t := Transform2D(0.5, Vector2(10, 20))
+	var s := 0.0
+	for i in range(1, n + 1):
+		s += (t * Vector2(1, 0)).x
+	return snappedf(s, 0.001)
+
+
+func bench_api_array_table_in(n: int) -> int:
+	var s := 0
+	for i in range(1, n + 1):
+		s += [1, 2, 3].size()
+	return s
