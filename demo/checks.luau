@@ -55,4 +55,9 @@ function Checks:api_checks()
 	return results
 end
 
+function Checks:string_ops(s)
+	return { s:begins_with("he"), s:ends_with("lo"), s:contains("ll"), s:is_empty(), s:to_upper(),
+		s:to_lower(), s:strip_edges(), s:strip_edges(false, true), s:replace("l", "L") }
+end
+
 return Checks

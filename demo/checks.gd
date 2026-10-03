@@ -64,6 +64,13 @@ func _initialize() -> void:
 	for key in api:
 		check(api[key], "API: " + str(key))
 
+	# Direct UTF-8 string methods give Godot's results
+	for sample in ["hello", "  héllo ✓  ", "", "HeLLo World", "ÄÖÜ äöü", "\tlol\n"]:
+		var expected := [sample.begins_with("he"), sample.ends_with("lo"), sample.contains("ll"), sample.is_empty(),
+			sample.to_upper(), sample.to_lower(), sample.strip_edges(), sample.strip_edges(false, true), sample.replace("l", "L")]
+		var got = a.string_ops(sample)
+		check(got == expected, "string methods match Godot for %s (got %s)" % [JSON.stringify(sample), got])
+
 	a.free()
 	print("failures: ", failures)
 	quit(failures)

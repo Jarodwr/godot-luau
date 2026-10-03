@@ -538,8 +538,146 @@ static int string_library_index(lua_State *L) {
 	return 1;
 }
 
+static int string_method_call(lua_State *L);
+
+// Common Godot String methods implemented directly on UTF-8 (no conversion to
+// a Godot String, no engine call). Same results as Godot's for valid UTF-8;
+// case conversion handles ASCII here and leaves other text to the engine.
+namespace {
+
+int str_begins_with(lua_State *L) {
+	size_t n, m;
+	const char *s = luaL_checklstring(L, 1, &n);
+	const char *p = luaL_checklstring(L, 2, &m);
+	lua_pushboolean(L, m <= n && memcmp(s, p, m) == 0);
+	return 1;
+}
+
+int str_ends_with(lua_State *L) {
+	size_t n, m;
+	const char *s = luaL_checklstring(L, 1, &n);
+	const char *p = luaL_checklstring(L, 2, &m);
+	lua_pushboolean(L, m <= n && memcmp(s + n - m, p, m) == 0);
+	return 1;
+}
+
+const char *find_bytes(const char *s, size_t n, const char *p, size_t m) {
+	if (m == 0) {
+		return s;
+	}
+	for (size_t i = 0; i + m <= n; i++) {
+		if (s[i] == p[0] && memcmp(s + i, p, m) == 0) {
+			return s + i;
+		}
+	}
+	return nullptr;
+}
+
+int str_contains(lua_State *L) {
+	size_t n, m;
+	const char *s = luaL_checklstring(L, 1, &n);
+	const char *p = luaL_checklstring(L, 2, &m);
+	lua_pushboolean(L, find_bytes(s, n, p, m) != nullptr);
+	return 1;
+}
+
+int str_is_empty(lua_State *L) {
+	size_t n;
+	luaL_checklstring(L, 1, &n);
+	lua_pushboolean(L, n == 0);
+	return 1;
+}
+
+bool is_ascii(const char *s, size_t n) {
+	for (size_t i = 0; i < n; i++) {
+		if ((unsigned char)s[i] >= 0x80) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// to_upper / to_lower: ASCII here, other text through the engine
+template <bool UPPER>
+int str_case(lua_State *L) {
+	size_t n;
+	const char *s = luaL_checklstring(L, 1, &n);
+	if (!is_ascii(s, n)) {
+		lua_pushvalue(L, lua_upvalueindex(1));  // the engine-backed method
+		lua_insert(L, 1);
+		lua_call(L, lua_gettop(L) - 1, 1);
+		return 1;
+	}
+	luaL_Strbuf buffer;
+	char *out = luaL_buffinitsize(L, &buffer, n);
+	for (size_t i = 0; i < n; i++) {
+		char c = s[i];
+		out[i] = UPPER ? (c >= 'a' && c <= 'z' ? c - 32 : c) : (c >= 'A' && c <= 'Z' ? c + 32 : c);
+	}
+	luaL_pushresultsize(&buffer, n);
+	return 1;
+}
+
+// strip_edges(left = true, right = true): Godot strips characters <= 32
+int str_strip_edges(lua_State *L) {
+	size_t n;
+	const char *s = luaL_checklstring(L, 1, &n);
+	bool left = lua_isnoneornil(L, 2) || lua_toboolean(L, 2);
+	bool right = lua_isnoneornil(L, 3) || lua_toboolean(L, 3);
+	size_t begin = 0, end = n;
+	while (left && begin < end && (unsigned char)s[begin] <= 32) begin++;
+	while (right && end > begin && (unsigned char)s[end - 1] <= 32) end--;
+	lua_pushlstring(L, s + begin, end - begin);
+	return 1;
+}
+
+// replace(what, forwhat): every occurrence, left to right
+int str_replace(lua_State *L) {
+	size_t n, m, r;
+	const char *s = luaL_checklstring(L, 1, &n);
+	const char *what = luaL_checklstring(L, 2, &m);
+	const char *with = luaL_checklstring(L, 3, &r);
+	if (m == 0) {
+		lua_pushvalue(L, 1);
+		return 1;
+	}
+	luaL_Strbuf buffer;
+	luaL_buffinit(L, &buffer);
+	const char *at = s, *end = s + n;
+	while (const char *found = find_bytes(at, (size_t)(end - at), what, m)) {
+		luaL_addlstring(&buffer, at, (size_t)(found - at));
+		luaL_addlstring(&buffer, with, r);
+		at = found + m;
+	}
+	luaL_addlstring(&buffer, at, (size_t)(end - at));
+	luaL_pushresult(&buffer);
+	return 1;
+}
+
+} // namespace
+
+static void push_engine_string_method(lua_State *L, const char *name) {
+	lua_pushlightuserdata(L, (void *)hold_name(name));
+	lua_pushcclosurek(L, string_method_call, name, 1, nullptr);
+}
+
 static void register_string_methods(lua_State *L) {
 	lua_getglobal(L, "string");
+	const luaL_Reg direct[] = {
+		{ "begins_with", str_begins_with }, { "ends_with", str_ends_with }, { "contains", str_contains },
+		{ "is_empty", str_is_empty }, { "strip_edges", str_strip_edges }, { "replace", str_replace },
+		{ nullptr, nullptr },
+	};
+	for (const luaL_Reg *r = direct; r->name; r++) {
+		lua_pushcfunction(L, r->func, r->name);
+		lua_setfield(L, -2, r->name);
+	}
+	push_engine_string_method(L, "to_upper");
+	lua_pushcclosurek(L, str_case<true>, "to_upper", 1, nullptr);
+	lua_setfield(L, -2, "to_upper");
+	push_engine_string_method(L, "to_lower");
+	lua_pushcclosurek(L, str_case<false>, "to_lower", 1, nullptr);
+	lua_setfield(L, -2, "to_lower");
 	lua_newtable(L);
 	lua_pushcfunction(L, string_library_index, "__index");
 	lua_setfield(L, -2, "__index");
