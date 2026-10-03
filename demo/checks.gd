@@ -45,6 +45,16 @@ func _initialize() -> void:
 	check(a.array_write(arr) == 12 and arr[0] == 10, "Array writes and reads by index")
 	check(a.array_oob(arr) == null, "Array index out of range reads as nil")
 
+	# Strings (ADR 0023): ASCII, non-ASCII, empty, longer than the stack buffer
+	check(a.echo("Player") == "Player", "ASCII string round trip")
+	check(a.echo("héllo ✓ 日本") == "héllo ✓ 日本", "non-ASCII string round trip")
+	check(a.echo("") == "", "empty string round trip")
+	var long_text := "ab✓".repeat(700)
+	check(a.echo(long_text) == long_text, "string longer than the stack buffer")
+	check(a.concat("héllo", " ✓") == "héllo ✓", "Lua concatenation of converted strings")
+	check(a.lua_length("✓") == 3, "Lua sees UTF-8 bytes")
+	check(a.echo(&"sname") == "sname", "StringName argument arrives as a string")
+
 	a.free()
 	print("failures: ", failures)
 	quit(failures)

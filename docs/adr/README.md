@@ -41,8 +41,9 @@ at the same optimisation level.
 | [0015](0015-variant-calls-construct-only-what-they-use.md) | Variant-route calls construct only what they use | Accepted |
 | [0016](0016-one-box-per-object.md) | One Lua value per engine object | Accepted |
 | [0017](0017-native-object-results-and-paths.md) | Native calls for object results and NodePath arguments | Accepted |
-| [0018](0018-string-conversion-cache.md) | Cache string conversions in both directions | Accepted |
+| [0018](0018-string-conversion-cache.md) | Cache string conversions in both directions | Superseded by 0023 |
 | [0019](0019-stringname-arguments-by-reference.md) | Pass StringName arguments by reference to the atom's name | Accepted |
 | [0020](0020-indexed-access-on-arrays-and-dictionaries.md) | Direct indexed access on Array and Dictionary | Accepted |
 | [0021](0021-calls-into-other-scripts-via-variant-call.md) | Call other languages' script methods directly | Accepted |
 | [0022](0022-script-instantiation-cost.md) | Investigate script instantiation cost | Proposed |
+| [0023](0023-cheaper-string-conversions.md) | Cheaper string conversions instead of a cache | Accepted |

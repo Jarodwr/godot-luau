@@ -1,6 +1,6 @@
 # 0018. Cache string conversions in both directions
 
-- **Status:** Accepted
+- **Status:** Superseded by [0023](0023-cheaper-string-conversions.md)
 - **Date:** 2026-10-03
 
 ## Context

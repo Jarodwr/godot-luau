@@ -53,8 +53,8 @@ All checksums match GDScript.
 | `get_node("Child")` (`api_get_node`) | 31 | 46 |
 | Object result (`api_object_return`) | 22 | 32 |
 | Call a GDScript object's method (`api_gdscript_call`) | 56 | 61 |
-| String in and out (`echo_string`) | 70 | 74 |
-| Six mixed arguments (`call_args6`) | 71 | 88 |
+| String in and out (`echo_string`) | 70 | 117 |
+| Six mixed arguments (`call_args6`) | 73 | 103 |
 | Node create + free (`api_node_create`) | 132 | 135 |
 | Two Vector2 operations (`api_vector2_math`) | 9.0 | 1.9 |
 | `_process` per node, 20,000 movers | 139 | 139 |
@@ -65,7 +65,9 @@ The full run (58 cases, including ones that need missing features) is in
 Remaining gaps:
 - **Engine property access:** `self.position` misses two Luau tables before
   reaching C ([0010](docs/adr/0010-self-stays-a-table.md)).
-- **Never-repeated strings:** each one is converted in full.
+- **Strings:** every crossing re-encodes between Godot's UTF-32 and Luau's
+  UTF-8, so Godot allocates and Luau interns a copy each time
+  ([0023](docs/adr/0023-cheaper-string-conversions.md)).
 - **Script instantiation:** `script.new()` is ~2× GDScript, mostly inside
   Godot's `set_script` ([0022](docs/adr/0022-script-instantiation-cost.md)).
 
