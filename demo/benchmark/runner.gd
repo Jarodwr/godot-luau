@@ -38,7 +38,7 @@ const CASES := [
 	{"name": "api_vector2_math", "kind": "inner", "n": 100000, "group": "api", "desc": "v = v + step * 0.5 (two Variant operators)"},
 	{"name": "api_vector2_field", "kind": "inner", "n": 100000, "group": "api", "desc": "read v.x"},
 	{"name": "api_vector2_method", "kind": "inner", "n": 100000, "group": "api", "desc": "call v.length() on a builtin type"},
-	{"name": "api_utility_fn", "kind": "inner", "n": 100000, "group": "api", "desc": "call the lerp utility function"},
+	{"name": "api_utility_fn", "kind": "inner", "n": 100000, "group": "api", "desc": "call the lerp utility function (varying weight)"},
 	{"name": "api_object_method", "kind": "inner", "n": 100000, "group": "api", "desc": "call get_name() on self (engine method)"},
 	{"name": "api_object_prop_get", "kind": "inner", "n": 100000, "group": "api", "desc": "read self.position.x (engine property)"},
 	{"name": "api_object_prop_set", "kind": "inner", "n": 100000, "group": "api", "desc": "assign self.position (engine property)"},

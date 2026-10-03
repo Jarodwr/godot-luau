@@ -149,7 +149,7 @@ end
 --- @registerMethod
 function Bench:bench_api_utility_fn(n)
 	local s = 0.0
-	for i = 1, n do s += lerp(0.0, 10.0, 0.5) end
+	for i = 1, n do s += lerp(0.0, 10.0, (i % 10) * 0.1) end
 	return s
 end
 --- @registerMethod

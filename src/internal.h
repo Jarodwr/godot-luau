@@ -18,6 +18,9 @@ using godot::String;
 // Read and written directly only when check_variant_layout() passed.
 constexpr size_t VARIANT_DATA = 8;
 
+// Whether a Variant (given its bytes) needs its destructor
+bool needs_destroy(const void *variant_bytes);
+
 // One argument or result in its native ptrcall layout
 struct NativeSlot {
 	alignas(16) unsigned char bytes[sizeof(Variant)];
@@ -27,7 +30,11 @@ struct NativeSlot {
 		switch (constructed) {
 			case T_STRING: reinterpret_cast<String *>(bytes)->~String(); break;
 			case T_STRING_NAME: reinterpret_cast<StringName *>(bytes)->~StringName(); break;
-			case T_VARIANT: reinterpret_cast<Variant *>(bytes)->~Variant(); break;
+			case T_VARIANT:
+				if (needs_destroy(bytes)) {
+					reinterpret_cast<Variant *>(bytes)->~Variant();
+				}
+				break;
 			case T_NODE_PATH: reinterpret_cast<NodePath *>(bytes)->~NodePath(); break;
 			default: break;
 		}
@@ -42,7 +49,6 @@ bool write_plain_variant(lua_State *L, int index, void *memory, bool vectors_as_
 // The Variant inside a Godot value's userdata (Variant or object box), to be
 // used in place while it stays on the stack; null for other Lua values
 const Variant *borrow_variant(lua_State *L, int index);
-bool needs_destroy(const void *variant_bytes);
 
 // Luau values as call arguments in raw storage: only the ones passed are
 // constructed, plain values are written as bytes (docs/adr/0015)

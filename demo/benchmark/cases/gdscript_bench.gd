@@ -162,7 +162,8 @@ func bench_api_vector2_method(n: int) -> float:
 func bench_api_utility_fn(n: int) -> float:
 	var s := 0.0
 	for i in range(1, n + 1):
-		s += lerp(0.0, 10.0, 0.5)
+		# A varying weight: constant arguments let GDScript fold the call away
+		s += lerp(0.0, 10.0, (i % 10) * 0.1)
 	return s
 
 

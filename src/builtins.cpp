@@ -551,11 +551,90 @@ static void register_string_methods(lua_State *L) {
 
 static std::vector<GDExtensionPtrUtilityFunction> utility_pointers;
 
+// The common case: every argument a number, boolean or Variant holding a
+// plain value, and a result of those types. Arguments are written straight
+// into flat stack storage (no per-argument slots or destructors). Returns
+// false (nothing pushed) to use the general path.
+static bool fast_utility(lua_State *L, const UtilityInfo &info, GDExtensionPtrUtilityFunction function, int argc) {
+	if (info.vararg || argc != info.argc) {
+		return false;
+	}
+	alignas(16) unsigned char storage[MAX_FAST_ARGS][sizeof(Variant)];
+	GDExtensionConstTypePtr argv[MAX_FAST_ARGS];
+	for (int i = 0; i < argc; i++) {
+		unsigned char *slot = storage[i];
+		argv[i] = slot;
+		int lt = lua_type(L, 1 + i);
+		switch (info.args[i]) {
+			case T_FLOAT:
+				if (lt != LUA_TNUMBER) return false;
+				*reinterpret_cast<double *>(slot) = lua_tonumber(L, 1 + i);
+				break;
+			case T_INT:
+				if (lt != LUA_TNUMBER) return false;
+				*reinterpret_cast<int64_t *>(slot) = (int64_t)lua_tonumber(L, 1 + i);
+				break;
+			case T_BOOL:
+				*reinterpret_cast<GDExtensionBool *>(slot) = lua_toboolean(L, 1 + i);
+				break;
+			case T_VARIANT:
+				// Numbers, booleans, nil and vectors as Variant bytes (nothing to
+				// destroy); anything else takes the general path
+				if (lt != LUA_TNUMBER && lt != LUA_TBOOLEAN && lt != LUA_TNIL && lt != LUA_TVECTOR) return false;
+				if (!write_plain_variant(L, 1 + i, slot)) return false;
+				break;
+			default:
+				return false;
+		}
+	}
+	switch (info.ret) {
+		case T_VOID:
+			function(nullptr, argv, argc);
+			lua_pushnil(L);
+			return true;
+		case T_FLOAT: {
+			double d;
+			function(&d, argv, argc);
+			lua_pushnumber(L, d);
+			return true;
+		}
+		case T_INT: {
+			int64_t v;
+			function(&v, argv, argc);
+			lua_pushnumber(L, (double)v);
+			return true;
+		}
+		case T_BOOL: {
+			GDExtensionBool b;
+			function(&b, argv, argc);
+			lua_pushboolean(L, b);
+			return true;
+		}
+		case T_VARIANT: {
+			alignas(Variant) unsigned char result[sizeof(Variant)] = {};  // a nil Variant
+			function(result, argv, argc);
+			Variant *value = reinterpret_cast<Variant *>(result);
+			if (!push_plain_variant(L, *value)) {
+				push_variant(L, *value);
+			}
+			if (needs_destroy(result)) {
+				value->~Variant();
+			}
+			return true;
+		}
+		default:
+			return false;
+	}
+}
+
 static int utility_call(lua_State *L) {
 	size_t index = (size_t)lua_tointeger(L, lua_upvalueindex(1));
 	const UtilityInfo &info = UTILITIES[index];
 	GDExtensionPtrUtilityFunction function = utility_pointers[index];
 	int argc = lua_gettop(L);
+	if (fast_utility(L, info, function, argc)) {
+		return 1;
+	}
 	if (info.vararg) {
 		if (argc > MAX_VARIANT_ARGS) {
 			luaL_error(L, "too many arguments");

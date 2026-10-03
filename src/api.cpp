@@ -346,8 +346,15 @@ bool to_native(lua_State *L, int index, ArgType type, NativeSlot &slot, GDExtens
 			return true;
 		}
 		case T_VARIANT:
-			new (slot.bytes) Variant(to_variant(L, index));
-			slot.constructed = T_VARIANT;
+			// Godot values in place; plain values as bytes; others converted
+			if (const Variant *held = borrow_variant(L, index)) {
+				arg_ptr = held;
+				return true;
+			}
+			if (!write_plain_variant(L, index, slot.bytes)) {
+				new (slot.bytes) Variant(to_variant(L, index));
+			}
+			slot.constructed = T_VARIANT;  // destroyed only if it needs it
 			return true;
 		default: {
 			// Rect2, Color…: from a Variant userdata of that exact type
@@ -370,7 +377,11 @@ void prepare_return(ArgType type, NativeSlot &slot) {
 			memset(slot.bytes, 0, sizeof(StringName));
 			slot.constructed = T_STRING_NAME;
 			break;
-		case T_VARIANT: new (slot.bytes) Variant(); slot.constructed = T_VARIANT; break;
+		case T_VARIANT:
+			// Zeroed bytes are a valid nil Variant: no constructor call
+			memset(slot.bytes, 0, sizeof(Variant));
+			slot.constructed = T_VARIANT;
+			break;
 		default: break;
 	}
 }
