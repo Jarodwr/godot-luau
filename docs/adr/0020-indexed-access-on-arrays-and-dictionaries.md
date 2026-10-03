@@ -1,6 +1,6 @@
 # 0020. Direct indexed access on Array and Dictionary
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-03
 
 ## Context
@@ -27,3 +27,17 @@ Method calls (`arr:size()`) keep going through `__namecall`.
 - Indexing becomes one engine call plus a push.
 - Measure `api_array_read` and, once constructors and iteration exist,
   `api_dict_rw` and `api_array_iterate`.
+
+## Result
+
+ns per op, measured with `tools/bench.sh` and back-to-back runs (15 repeats,
+macOS arm64).
+
+Implemented for Array, packed arrays and Dictionary, both reading and
+writing. Variant values had no `__newindex` before. A missing key or an
+out-of-range index reads as `nil`. `demo/checks.gd` covers reads, writes and
+out-of-range reads.
+
+| Case | Before | After | GDScript |
+|---|---:|---:|---:|
+| `api_array_read` | 23.7 | 20.0 | 14 |

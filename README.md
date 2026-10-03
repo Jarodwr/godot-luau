@@ -44,19 +44,30 @@ All checksums match GDScript.
 
 | Case | GDScript | godot-luau |
 |---|---:|---:|
-| Bare call into a script (`call_noop`) | 38 | 36 |
-| Two ints in, one out (`call_add2`) | 61 | 54 |
-| Script field read+write (`api_dynamic_field`) | 6.8 | 5.1 |
-| Own method via `self` (`api_self_method`) | 53 | 8.7 |
+| Bare call into a script (`call_noop`) | 39 | 36 |
+| Script field read+write (`api_dynamic_field`) | 6.8 | 4.9 |
+| Own method via `self` (`api_self_method`) | 52 | 8.8 |
 | Engine property read (`api_object_prop_get`) | 20 | 27 |
-| Engine property write (`api_object_prop_set`) | 27 | 33 |
-| Engine method + string method (`api_object_method`) | 18 | 42 |
-| Singleton method (`api_singleton_call`) | 13 | 15 |
-| Two Vector2 operations (`api_vector2_math`) | 8.9 | 1.9 |
-| `_process` per node, 20,000 movers | 144 | 148 (Fennel: 120 vs 122) |
+| Engine property write (`api_object_prop_set`) | 26 | 32 |
+| Singleton method (`api_singleton_call`) | 12 | 15 |
+| `get_node("Child")` (`api_get_node`) | 31 | 46 |
+| Object result (`api_object_return`) | 22 | 32 |
+| Call a GDScript object's method (`api_gdscript_call`) | 56 | 61 |
+| String in and out (`echo_string`) | 70 | 74 |
+| Six mixed arguments (`call_args6`) | 71 | 88 |
+| Node create + free (`api_node_create`) | 132 | 135 |
+| Two Vector2 operations (`api_vector2_math`) | 9.0 | 1.9 |
+| `_process` per node, 20,000 movers | 139 | 139 |
 
-Engine property access is the remaining gap: `self.position` misses two Luau
-tables before reaching C ([0010](docs/adr/0010-self-stays-a-table.md)).
+The full run (58 cases, including ones that need missing features) is in
+`demo/benchmark/results/luau.json`.
+
+Remaining gaps:
+- **Engine property access:** `self.position` misses two Luau tables before
+  reaching C ([0010](docs/adr/0010-self-stays-a-table.md)).
+- **Never-repeated strings:** each one is converted in full.
+- **Script instantiation:** `script.new()` is ~2× GDScript, mostly inside
+  Godot's `set_script` ([0022](docs/adr/0022-script-instantiation-cost.md)).
 
 To benchmark:
 

@@ -1,6 +1,6 @@
 # 0019. Pass StringName arguments by reference to the atom's name
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-03
 
 ## Context
@@ -23,3 +23,16 @@ argument with a simple result, which covers `is_action_pressed`,
 
 - No construction or destruction for name arguments that have atoms.
 - Measure `api_string_arg`.
+
+## Result
+
+ns per op, measured with `tools/bench.sh` and back-to-back runs (15 repeats,
+macOS arm64).
+
+Implemented. The atom table changed from `std::vector` to `std::deque`, so
+names never move when atoms are added. Engine calls hold pointers to them
+while Lua code (signal handlers, for example) can create new strings.
+
+| Case | Before | After | GDScript |
+|---|---:|---:|---:|
+| `api_string_arg` | 34.2 | 25.8 | 18 |

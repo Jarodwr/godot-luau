@@ -1,6 +1,6 @@
 # 0018. Cache string conversions in both directions
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-03
 
 ## Context
@@ -31,3 +31,21 @@ slot.
 - Memory is bounded by the slot count (for example 1024 per direction).
 - Measure `echo_string`, `call_args6` and `api_string_method` (once Godot
   string methods exist).
+
+## Result
+
+ns per op, measured with `tools/bench.sh` and back-to-back runs (15 repeats,
+macOS arm64).
+
+Implemented with 1024 slots per direction. A first version cached every
+conversion and made never-repeated strings ~17 ns slower per round trip. A
+string is now cached the second time its slot sees it, judged by address
+plus a hash of up to 64 bytes. The hash matters because the allocator reuses
+addresses for temporary strings. A new benchmark case, `echo_string_unique`,
+tracks the miss path.
+
+| Case | Before | After | GDScript |
+|---|---:|---:|---:|
+| `echo_string` | 154.5 | 74.4 | 70 |
+| `echo_string_unique` | 212–214 | 212–213 | 96 |
+| `call_args6` | 140.4 | 88.4 | 71 |

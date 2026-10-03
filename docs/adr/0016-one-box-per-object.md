@@ -1,6 +1,6 @@
 # 0016. One Lua value per engine object
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-03
 
 ## Context
@@ -30,3 +30,21 @@ creates and caches a box as now.
   when Lua drops them.
 - Measure `echo_object`, `api_object_return`, `api_get_node` and
   `api_node_create`.
+
+## Result
+
+ns per op, measured with `tools/bench.sh` and back-to-back runs (15 repeats,
+macOS arm64).
+
+Implemented for objects that **aren't** RefCounted. Caching RefCounted
+objects too made `RefCounted.new()` in a loop ~70 ns slower (98 → 170): each
+temporary object left a dead entry in the weak table until the next
+collection. Objects fresh from `Class.new()` skip the lookup.
+
+| Case | Before | After | GDScript |
+|---|---:|---:|---:|
+| `api_object_return` | 64.6 | 37.0 | 22 |
+| `api_get_node` | 153.7 | 127.0 | 31 |
+| `echo_object` | 107.5 | 79.0 | 70 |
+| `api_node_create` | 168.1 | 170.0 | 130 |
+| `api_new_object` | 97 | 100 | 140 |

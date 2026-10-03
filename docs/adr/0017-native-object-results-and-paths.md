@@ -1,6 +1,6 @@
 # 0017. Native calls for object results and NodePath arguments
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-03
 
 ## Context
@@ -26,3 +26,19 @@ These are among the most common calls in game code.
   entirely.
 - One more cached conversion (bounded, cleared with the state).
 - Measure `api_get_node` and `api_object_return`.
+
+## Result
+
+ns per op, measured with `tools/bench.sh` and back-to-back runs (15 repeats,
+macOS arm64).
+
+Implemented as described. The generator marks results of RefCounted
+classes (and plain `Object`) as `T_OBJECT_REF`, which keep the Variant route.
+The NodePath cache is never evicted while the state lives, because arguments
+point at its entries. When it's full (4096 paths), new paths are constructed
+per call instead.
+
+| Case | Before | After | GDScript |
+|---|---:|---:|---:|
+| `api_get_node` | 127.0 | 46 | 31 |
+| `api_object_return` | 37.0 | 34 | 22 |

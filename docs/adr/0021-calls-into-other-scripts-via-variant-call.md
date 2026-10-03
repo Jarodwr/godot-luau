@@ -1,6 +1,6 @@
 # 0021. Call other languages' script methods directly
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-03
 
 ## Context
@@ -21,3 +21,14 @@ arguments are built as in
 
 - No Variant for the method name and no vararg packing.
 - Measure `api_gdscript_call` and `echo_object`.
+
+## Result
+
+ns per op, measured with `tools/bench.sh` and back-to-back runs (15 repeats,
+macOS arm64).
+
+Implemented using the object's Variant held in its Lua box.
+
+| Case | Before | After | GDScript |
+|---|---:|---:|---:|
+| `api_gdscript_call` | 97.6 | 60.7 | 56 |

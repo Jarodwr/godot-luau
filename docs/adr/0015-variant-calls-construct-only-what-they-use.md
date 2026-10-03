@@ -1,6 +1,6 @@
 # 0015. Variant-route calls construct only what they use
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-03
 
 ## Context
@@ -31,3 +31,18 @@ direction.
 - Expected to move `api_get_node`, `api_object_return`, `api_gdscript_call`
   and `call_args6` most.
 - Measure those cases plus `api_node_create`.
+
+## Result
+
+ns per op, measured with `tools/bench.sh` and back-to-back runs (15 repeats,
+macOS arm64).
+
+| Case | Before | After | GDScript |
+|---|---:|---:|---:|
+| `api_gdscript_call` | 139.2 | 97.6 | 54 |
+| `api_object_return` | 95.2 | 64.6 | 22 |
+| `api_get_node` | 180.8 | 153.7 | 31 |
+| `api_node_create` | 201.1 | 168.1 | 133 |
+
+Also applied to method calls on other Godot values (`arr:size()`), which now
+use `variant_call` with the same argument storage.
