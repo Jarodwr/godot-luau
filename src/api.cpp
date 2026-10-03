@@ -18,6 +18,7 @@
 #include <lualib.h>
 
 #include <cstring>
+#include <deque>
 #include <new>
 
 using namespace godot;
@@ -34,7 +35,9 @@ lua_State *state() {
 
 // ---------------------------------------------------------------- atoms
 
-static std::vector<StringName> atoms;
+// A deque: names never move as atoms are added, so engine calls can be
+// passed pointers to them while Lua code creates new strings (docs/adr/0019)
+static std::deque<StringName> atoms;
 constexpr size_t MAX_ATOM_LENGTH = 64;
 constexpr size_t MAX_ATOMS = 32000;
 
@@ -368,11 +371,19 @@ static bool to_native(lua_State *L, int index, ArgType type, NativeSlot &slot, G
 			slot.constructed = T_STRING;
 			return true;
 		}
-		case T_STRING_NAME:
+		case T_STRING_NAME: {
 			if (lua_type(L, index) != LUA_TSTRING) return false;
+			// Arguments are passed by pointer and never modified: point at the
+			// atom's name instead of copying it (docs/adr/0019)
+			int atom = string_atom(L, index);
+			if (atom >= 0) {
+				arg_ptr = &atom_name(atom);
+				return true;
+			}
 			new (slot.bytes) StringName(string_name_at(L, index));
 			slot.constructed = T_STRING_NAME;
 			return true;
+		}
 		case T_VECTOR2:
 		case T_VECTOR3:
 		case T_VECTOR2I:
@@ -632,8 +643,17 @@ static bool fast_call(lua_State *L, GDExtensionObjectPtr object, const Method &m
 	}
 	SimpleValue arg, result;
 	GDExtensionConstTypePtr argv[] = { &arg };
-	if (argc == 1 && (!is_simple(info->args[0]) || !to_simple(L, first, info->args[0], arg))) {
-		return false;
+	if (argc == 1) {
+		if (info->args[0] == T_STRING_NAME) {
+			// A name with an atom: pass the atom's StringName (docs/adr/0019)
+			int atom = lua_type(L, first) == LUA_TSTRING ? string_atom(L, first) : -1;
+			if (atom < 0) {
+				return false;
+			}
+			argv[0] = &atom_name(atom);
+		} else if (!is_simple(info->args[0]) || !to_simple(L, first, info->args[0], arg)) {
+			return false;
+		}
 	}
 	gdextension_interface::object_method_bind_ptrcall(method.bind, object, argc ? argv : nullptr, info->ret == T_VOID ? nullptr : &result);
 	push_simple(L, info->ret, result);
