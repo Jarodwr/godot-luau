@@ -93,7 +93,7 @@ const CASES := [
 	# API surface (godot-luau features, todo/): builtin types, utilities, enums
 	{"name": "api_vector2_methods", "kind": "inner", "n": 100000, "group": "api", "desc": "v.normalized().dot(w) + v.distance_to(w)"},
 	{"name": "api_vector3_math", "kind": "inner", "n": 100000, "group": "api", "desc": "v = v + step * 0.5 on Vector3"},
-	{"name": "api_vector2i_math", "kind": "inner", "n": 100000, "group": "api", "desc": "a = a + Vector2i(1, 2)"},
+	{"name": "api_vector2i_math", "kind": "inner", "n": 100000, "group": "api", "desc": "a = a + step on Vector2i"},
 	{"name": "api_rect_has_point", "kind": "inner", "n": 100000, "group": "api", "desc": "Rect2.has_point(Vector2)"},
 	{"name": "api_builtin_static", "kind": "inner", "n": 100000, "group": "api", "desc": "Vector2.from_angle(0.5).x (static builtin method)"},
 	{"name": "api_utility_mix", "kind": "inner", "n": 100000, "group": "api", "desc": "clampf(...) + deg_to_rad(90)"},

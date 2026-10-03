@@ -71,6 +71,10 @@ func _initialize() -> void:
 		var got = a.string_ops(sample)
 		check(got == expected, "string methods match Godot for %s (got %s)" % [JSON.stringify(sample), got])
 
+	# Packed Vector2i crossing into and out of GDScript
+	check(a.echo(Vector2i(9, -9)) == Vector2i(9, -9), "Vector2i round trip through a script")
+	check(typeof(a.echo(Vector2i(1, 1))) == TYPE_VECTOR2I, "Vector2i stays a Vector2i")
+
 	a.free()
 	print("failures: ", failures)
 	quit(failures)

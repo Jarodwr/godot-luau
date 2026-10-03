@@ -333,6 +333,16 @@ bool call_builtin_method(lua_State *L, const Variant *self, int atom, int first,
 			}
 			continue;
 		}
+		// Packed values (Vector2i, RID) into the slot
+		int tag = packed_tag(L, first + i);
+		if (tag == LUTAG_VECTOR2I && type == Variant::VECTOR2I) {
+			unpack_vector2i(packed_bits(L, first + i, tag), reinterpret_cast<int32_t *>(slots[i].bytes));
+			continue;
+		}
+		if (tag == LUTAG_RID && type == Variant::RID) {
+			*reinterpret_cast<uint64_t *>(slots[i].bytes) = packed_bits(L, first + i, tag);
+			continue;
+		}
 		// Other builtin types: a Godot value of exactly that type, used in place
 		const Variant *held = borrow_variant(L, first + i);
 		if (held == nullptr || type_of(*held) != (Variant::Type)type || base_kind((Variant::Type)type) == BaseKind::NONE) {
@@ -397,6 +407,23 @@ bool call_builtin_method(lua_State *L, const Variant *self, int atom, int first,
 			push_object(L, object);
 			return true;
 		}
+		case Variant::VECTOR2I:
+			if (PACKED_VALUES) {
+				int32_t r[2] = {};
+				method.function(base, argv, r, argc);
+				push_packed_vector2i(L, r[0], r[1]);
+				return true;
+			}
+			break;
+		case Variant::RID:
+			if (PACKED_VALUES) {
+				uint64_t r = 0;
+				method.function(base, argv, &r, argc);
+				push_packed_rid(L, r);
+				return true;
+			}
+			break;
+
 		case VARIANT_TYPE_ANY: {
 			alignas(Variant) unsigned char v[sizeof(Variant)] = {};  // a nil Variant
 			method.function(base, argv, v, argc);
@@ -520,10 +547,32 @@ void classify(lua_State *L, int index, Operand &operand) {
 			return;
 		}
 		case LUA_TUSERDATA: {
-			const Variant *held = (const Variant *)lua_touserdatatagged(L, index, TAG_VARIANT);
-			if (held && base_kind(type_of(*held)) != BaseKind::NONE) {
-				operand.type = type_of(*held);
-				operand.pointer = typed_pointer(held);
+			unsigned char *held = (unsigned char *)lua_touserdatatagged(L, index, TAG_VARIANT);
+			if (held == nullptr) {
+				return;
+			}
+			// Type and pointer from the bytes, deciding the kind once
+			Variant::Type type = (Variant::Type)*reinterpret_cast<const int32_t *>(held);
+			unsigned char *data = held + VARIANT_DATA;
+			switch (base_kind(type)) {
+				case BaseKind::INLINE: operand.pointer = data; break;
+				case BaseKind::HEAP: operand.pointer = *reinterpret_cast<void **>(data); break;
+				case BaseKind::PACKED: operand.pointer = *reinterpret_cast<unsigned char **>(data) + PACKED_ARRAY_OFFSET; break;
+				default: return;
+			}
+			operand.type = type;
+			return;
+		}
+		case LUA_TLIGHTUSERDATA: {
+			int tag = packed_tag(L, index);
+			if (tag == LUTAG_VECTOR2I) {
+				operand.type = Variant::VECTOR2I;
+				unpack_vector2i(packed_bits(L, index, tag), reinterpret_cast<int32_t *>(operand.storage));
+				operand.pointer = operand.storage;
+			} else if (tag == LUTAG_RID) {
+				operand.type = Variant::RID;
+				*reinterpret_cast<uint64_t *>(operand.storage) = packed_bits(L, index, tag);
+				operand.pointer = operand.storage;
 			}
 			return;
 		}
@@ -534,7 +583,45 @@ void classify(lua_State *L, int index, Operand &operand) {
 
 } // namespace
 
+// Vector2i arithmetic directly on packed values: Godot's int32 maths, with
+// wrap-around like the engine's. Division stays with the engine (it reports
+// division by zero).
+static bool packed_vector2i_arith(lua_State *L, int op) {
+	if (op != Variant::OP_ADD && op != Variant::OP_SUBTRACT && op != Variant::OP_MULTIPLY) {
+		return false;
+	}
+	int ta = packed_tag(L, 1), tb = packed_tag(L, 2);
+	int32_t a[2], b[2];
+	if (ta == LUTAG_VECTOR2I && tb == LUTAG_VECTOR2I) {
+		unpack_vector2i(packed_bits(L, 1, ta), a);
+		unpack_vector2i(packed_bits(L, 2, tb), b);
+	} else if (op == Variant::OP_MULTIPLY && ta == LUTAG_VECTOR2I && lua_type(L, 2) == LUA_TNUMBER) {
+		double d = lua_tonumber(L, 2);
+		if (d != (double)(int64_t)d) return false;  // Vector2i * float is a Vector2: the engine's
+		unpack_vector2i(packed_bits(L, 1, ta), a);
+		b[0] = b[1] = (int32_t)(int64_t)d;
+	} else if (op == Variant::OP_MULTIPLY && tb == LUTAG_VECTOR2I && lua_type(L, 1) == LUA_TNUMBER) {
+		double d = lua_tonumber(L, 1);
+		if (d != (double)(int64_t)d) return false;
+		unpack_vector2i(packed_bits(L, 2, tb), b);
+		a[0] = a[1] = (int32_t)(int64_t)d;
+	} else {
+		return false;
+	}
+	uint32_t x, y;
+	switch (op) {
+		case Variant::OP_ADD: x = (uint32_t)a[0] + (uint32_t)b[0]; y = (uint32_t)a[1] + (uint32_t)b[1]; break;
+		case Variant::OP_SUBTRACT: x = (uint32_t)a[0] - (uint32_t)b[0]; y = (uint32_t)a[1] - (uint32_t)b[1]; break;
+		default: x = (uint32_t)a[0] * (uint32_t)b[0]; y = (uint32_t)a[1] * (uint32_t)b[1]; break;
+	}
+	push_packed_vector2i(L, (int32_t)x, (int32_t)y);
+	return true;
+}
+
 bool call_validated_operator(lua_State *L, int op) {
+	if (PACKED_VALUES && packed_vector2i_arith(L, op)) {
+		return true;
+	}
 	if (!builtin_layout_ok || op < 0 || op >= CACHED_OPS) {
 		return false;
 	}
@@ -586,6 +673,22 @@ bool call_validated_operator(lua_State *L, int op) {
 			lua_pushvector(L, r[0], r[1], r[2]);
 			return true;
 		}
+		case Variant::VECTOR2I:
+			if (PACKED_VALUES) {
+				int32_t r[2] = {};
+				entry->function(a.pointer, b.pointer, r);
+				push_packed_vector2i(L, r[0], r[1]);
+				return true;
+			}
+			break;
+		case Variant::RID:
+			if (PACKED_VALUES) {
+				uint64_t r = 0;
+				entry->function(a.pointer, b.pointer, &r);
+				push_packed_rid(L, r);
+				return true;
+			}
+			break;
 		default:
 			break;
 	}
@@ -650,10 +753,62 @@ static void check_builtin_layout() {
 
 // ---------------------------------------------------------------- builtin type globals (ADR 0024)
 
+// Direct construction from numbers for plain types, matching Godot's
+// component constructors: written straight into place, no engine call.
+// False if the arguments don't fit (the engine picks the constructor).
+static bool construct_from_numbers(lua_State *L, Variant::Type type, int argc) {
+	double n[4];
+	if (argc > 4) {
+		return false;
+	}
+	for (int i = 0; i < argc; i++) {
+		if (lua_type(L, 2 + i) != LUA_TNUMBER) {
+			return false;
+		}
+		n[i] = lua_tonumber(L, 2 + i);
+	}
+	if (PACKED_VALUES && type == Variant::VECTOR2I && argc == 2) {
+		push_packed_vector2i(L, (int32_t)n[0], (int32_t)n[1]);
+		return true;
+	}
+	if (PACKED_VALUES && type == Variant::RID && argc == 0) {
+		push_packed_rid(L, 0);
+		return true;
+	}
+	int floats = 0, ints = 0;
+	switch (type) {
+		case Variant::COLOR: if (argc == 3 || argc == 4) floats = 4; break;
+		case Variant::RECT2: case Variant::VECTOR4: case Variant::PLANE: case Variant::QUATERNION:
+			if (argc == 4) floats = 4;
+			break;
+		case Variant::RECT2I: case Variant::VECTOR4I: if (argc == 4) ints = 4; break;
+		case Variant::VECTOR3I: if (argc == 3) ints = 3; break;
+		default: break;
+	}
+	if (floats == 0 && ints == 0) {
+		return false;
+	}
+	unsigned char *box = (unsigned char *)lua_newuserdatataggedwithmetatable(L, sizeof(Variant), TAG_VARIANT);
+	memset(box, 0, sizeof(Variant));
+	*reinterpret_cast<int32_t *>(box) = type;
+	unsigned char *data = box + VARIANT_DATA;
+	for (int i = 0; i < floats; i++) {
+		// Color(r, g, b) has alpha 1
+		reinterpret_cast<float *>(data)[i] = i < argc ? (float)n[i] : 1.0f;
+	}
+	for (int i = 0; i < ints; i++) {
+		reinterpret_cast<int32_t *>(data)[i] = (int32_t)n[i];
+	}
+	return true;
+}
+
 // Type(...): Godot picks the constructor matching the arguments
 static int builtin_construct(lua_State *L) {
 	Variant::Type type = (Variant::Type)lua_tointeger(L, lua_upvalueindex(1));
 	int argc = lua_gettop(L) - 1;  // 1 is the type table
+	if (variant_layout_checked() && construct_from_numbers(L, type, argc)) {
+		return 1;
+	}
 	if (argc > MAX_VARIANT_ARGS) {
 		luaL_error(L, "too many arguments");
 	}
@@ -1511,6 +1666,113 @@ Variant table_aware_to_variant(lua_State *L, int index, int depth) {
 	return to_variant(L, index);
 }
 
+// ---------------------------------------------------------------- packed values (ADR 0030)
+
+namespace {
+
+// The packed value at `index` as a plain Variant in `bytes` (no destructor)
+bool packed_as_variant(lua_State *L, int index, unsigned char *bytes) {
+	memset(bytes, 0, sizeof(Variant));
+	return packed_tag(L, index) && write_plain_variant(L, index, bytes);
+}
+
+// value:method(...) on a packed value: through the cached method pointer,
+// or variant_call
+int packed_method_call(lua_State *L) {
+	int atom = (int)lua_tointeger(L, lua_upvalueindex(1));
+	alignas(Variant) unsigned char self[sizeof(Variant)];
+	if (!packed_as_variant(L, 1, self)) {
+		luaL_error(L, "call methods with ':'");
+	}
+	const Variant *value = reinterpret_cast<const Variant *>(self);
+	int argc = lua_gettop(L) - 1;
+	if (call_builtin_method(L, value, atom, 2, argc)) {
+		return 1;
+	}
+	if (argc > MAX_VARIANT_ARGS) {
+		luaL_error(L, "too many arguments");
+	}
+	int status;
+	{
+		VariantResult result;
+		GDExtensionCallError error;
+		call_with_vector_retry(L, 2, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
+			gdextension_interface::variant_call(const_cast<Variant *>(value)->_native_ptr(), atom_name(atom)._native_ptr(), args.pointers(), argc, r.uninitialized(), &e);
+		});
+		status = finish_call(L, result, error, "method");
+	}
+	if (status < 0) {
+		lua_error(L);
+	}
+	return status;
+}
+
+// Fields (x, y) and methods; methods are cached per tag in the upvalue table
+int packed_index(lua_State *L) {
+	int tag = packed_tag(L, 1);
+	if (lua_type(L, 2) != LUA_TSTRING || tag == 0) {
+		return 0;
+	}
+	size_t length;
+	const char *key = lua_tolstring(L, 2, &length);
+	if (tag == LUTAG_VECTOR2I && length == 1 && (key[0] == 'x' || key[0] == 'y')) {
+		int32_t v[2];
+		unpack_vector2i(packed_bits(L, 1, tag), v);
+		lua_pushnumber(L, key[0] == 'x' ? v[0] : v[1]);
+		return 1;
+	}
+	lua_rawgeti(L, lua_upvalueindex(1), tag);  // the methods table for this tag
+	lua_pushvalue(L, 2);
+	if (lua_rawget(L, -2) != LUA_TNIL) {
+		return 1;
+	}
+	lua_pop(L, 1);
+	int atom = string_atom(L, 2);
+	const BuiltinMember *member = find_builtin_member(tag == LUTAG_VECTOR2I ? "Vector2i" : "RID", key);
+	if (atom < 0 || member == nullptr || member->kind != B_METHOD) {
+		return 0;
+	}
+	lua_pushinteger(L, atom);
+	lua_pushcclosurek(L, packed_method_call, key, 1, nullptr);
+	lua_pushvalue(L, 2);
+	lua_pushvalue(L, -2);
+	lua_rawset(L, -4);
+	return 1;
+}
+
+int packed_tostring(lua_State *L) {
+	alignas(Variant) unsigned char bytes[sizeof(Variant)];
+	if (!packed_as_variant(L, 1, bytes)) {
+		lua_pushstring(L, "<lightuserdata>");
+		return 1;
+	}
+	push_string(L, reinterpret_cast<const Variant *>(bytes)->stringify());
+	return 1;
+}
+
+} // namespace
+
+static void register_packed_values(lua_State *L) {
+	if (!PACKED_VALUES) {
+		return;
+	}
+	lua_newtable(L);  // the light userdata metatable
+	lua_newtable(L);  // methods per tag
+	lua_newtable(L);
+	lua_rawseti(L, -2, LUTAG_VECTOR2I);
+	lua_newtable(L);
+	lua_rawseti(L, -2, LUTAG_RID);
+	lua_pushcclosurek(L, packed_index, "__index", 1, nullptr);
+	lua_setfield(L, -2, "__index");
+	lua_pushcfunction(L, packed_tostring, "__tostring");
+	lua_setfield(L, -2, "__tostring");
+	set_operator_metamethods(L, -1);
+	lua_pushlightuserdatatagged(L, nullptr, LUTAG_VECTOR2I);
+	lua_insert(L, -2);
+	lua_setmetatable(L, -2);  // sets the metatable shared by all light userdata
+	lua_pop(L, 1);
+}
+
 // ---------------------------------------------------------------- registration
 
 void register_builtins(lua_State *L) {
@@ -1519,6 +1781,7 @@ void register_builtins(lua_State *L) {
 	register_builtin_types(L);
 	register_vector_methods(L);
 	register_string_methods(L);
+	register_packed_values(L);
 
 	lua_getuserdatametatable(L, TAG_VARIANT);
 	lua_pushcfunction(L, variant_iter, "__iter");

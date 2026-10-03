@@ -18,6 +18,41 @@ using godot::String;
 // Read and written directly only when check_variant_layout() passed.
 constexpr size_t VARIANT_DATA = 8;
 
+// ---- Packed values (docs/adr/0030)
+//
+// Vector2i (two int32) and RID (a uint64) fit in a tagged light userdata's
+// 8 bytes: no allocation, no garbage collection, and equality is Lua's own.
+// Needs 64-bit pointers; elsewhere these stay Variant userdata.
+#if UINTPTR_MAX == 0xFFFFFFFFFFFFFFFFu
+constexpr bool PACKED_VALUES = true;
+#else
+constexpr bool PACKED_VALUES = false;
+#endif
+enum : int { LUTAG_VECTOR2I = 1, LUTAG_RID = 2 };
+
+inline void push_packed_vector2i(lua_State *L, int32_t x, int32_t y) {
+	uint64_t bits = (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32);
+	lua_pushlightuserdatatagged(L, (void *)(uintptr_t)bits, LUTAG_VECTOR2I);
+}
+
+inline void push_packed_rid(lua_State *L, uint64_t id) {
+	lua_pushlightuserdatatagged(L, (void *)(uintptr_t)id, LUTAG_RID);
+}
+
+// The packed tag of the value at `index` (0 if it isn't a packed value)
+inline int packed_tag(lua_State *L, int index) {
+	return PACKED_VALUES && lua_type(L, index) == LUA_TLIGHTUSERDATA ? lua_lightuserdatatag(L, index) : 0;
+}
+
+inline uint64_t packed_bits(lua_State *L, int index, int tag) {
+	return (uint64_t)(uintptr_t)lua_tolightuserdatatagged(L, index, tag);
+}
+
+inline void unpack_vector2i(uint64_t bits, int32_t r[2]) {
+	r[0] = (int32_t)(uint32_t)bits;
+	r[1] = (int32_t)(uint32_t)(bits >> 32);
+}
+
 // Whether a Variant (given its bytes) needs its destructor
 bool needs_destroy(const void *variant_bytes);
 
@@ -116,6 +151,13 @@ struct VariantResult {
 	}
 	Variant &get() { return *reinterpret_cast<Variant *>(storage); }
 };
+
+// Whether the startup check confirmed Godot's Variant layout (values may be
+// read and written as bytes)
+bool variant_layout_checked();
+
+// Sets __add, __sub, __mul, __div, __eq, __lt, __le on the table at `index`
+void set_operator_metamethods(lua_State *L, int index);
 
 // Pushes a plain Variant (nil, bool, number, vector, String) from its bytes;
 // false for other types

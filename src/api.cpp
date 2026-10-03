@@ -313,6 +313,10 @@ bool to_native(lua_State *L, int index, ArgType type, NativeSlot &slot, GDExtens
 		case T_VECTOR3:
 		case T_VECTOR2I:
 		case T_VECTOR3I: {
+			if (type == T_VECTOR2I && packed_tag(L, index) == LUTAG_VECTOR2I) {
+				unpack_vector2i(packed_bits(L, index, LUTAG_VECTOR2I), reinterpret_cast<int32_t *>(slot.bytes));
+				return true;
+			}
 			const float *v = lua_tovector(L, index);
 			if (v == nullptr) return false;
 			int n = (type == T_VECTOR2 || type == T_VECTOR2I) ? 2 : 3;
@@ -944,12 +948,37 @@ void push_result(lua_State *L, VariantResult &result) {
 	}
 }
 
+template <Variant::Operator OP>
+static int variant_operator(lua_State *L);
+
+void set_operator_metamethods(lua_State *L, int index) {
+	index = lua_absindex(L, index);
+	lua_pushcfunction(L, variant_operator<Variant::OP_ADD>, "__add");
+	lua_setfield(L, index, "__add");
+	lua_pushcfunction(L, variant_operator<Variant::OP_SUBTRACT>, "__sub");
+	lua_setfield(L, index, "__sub");
+	lua_pushcfunction(L, variant_operator<Variant::OP_MULTIPLY>, "__mul");
+	lua_setfield(L, index, "__mul");
+	lua_pushcfunction(L, variant_operator<Variant::OP_DIVIDE>, "__div");
+	lua_setfield(L, index, "__div");
+	lua_pushcfunction(L, variant_operator<Variant::OP_EQUAL>, "__eq");
+	lua_setfield(L, index, "__eq");
+	lua_pushcfunction(L, variant_operator<Variant::OP_LESS>, "__lt");
+	lua_setfield(L, index, "__lt");
+	lua_pushcfunction(L, variant_operator<Variant::OP_LESS_EQUAL>, "__le");
+	lua_setfield(L, index, "__le");
+}
+
 void push_variant_userdata(lua_State *L, const Variant &value) {
 	Variant *box = (Variant *)lua_newuserdatataggedwithmetatable(L, sizeof(Variant), TAG_VARIANT);
 	new (box) Variant(value);
 }
 
 static bool variant_bytes_ok = false;
+
+bool variant_layout_checked() {
+	return variant_bytes_ok;
+}
 // Whether a STRING Variant holds its String at the data offset (checked at
 // startup with the rest of the layout)
 static bool string_in_variant_ok = false;
@@ -1181,6 +1210,14 @@ bool push_plain_variant(lua_State *L, const Variant &value) {
 			if (!string_in_variant_ok) return false;
 			push_string(L, *reinterpret_cast<const String *>(data));  // no copy out of the Variant
 			return true;
+		case Variant::VECTOR2I:
+			if (!PACKED_VALUES) return false;
+			push_packed_vector2i(L, reinterpret_cast<const int32_t *>(data)[0], reinterpret_cast<const int32_t *>(data)[1]);
+			return true;
+		case Variant::RID:
+			if (!PACKED_VALUES) return false;
+			push_packed_rid(L, *reinterpret_cast<const uint64_t *>(data));
+			return true;
 		default: return false;
 	}
 }
@@ -1228,6 +1265,19 @@ bool write_plain_variant(lua_State *L, int index, void *memory, bool vectors_as_
 			} else {
 				type = Variant::VECTOR3;
 				out[2] = v[2];
+			}
+			break;
+		}
+		case LUA_TLIGHTUSERDATA: {
+			int tag = packed_tag(L, index);
+			if (tag == LUTAG_VECTOR2I) {
+				type = Variant::VECTOR2I;
+				unpack_vector2i(packed_bits(L, index, tag), reinterpret_cast<int32_t *>(data));
+			} else if (tag == LUTAG_RID) {
+				type = Variant::RID;
+				*reinterpret_cast<uint64_t *>(data) = packed_bits(L, index, tag);
+			} else {
+				return false;
 			}
 			break;
 		}
@@ -1290,6 +1340,13 @@ Variant to_variant(lua_State *L, int index) {
 			Variant value(*s);
 			s->~String();
 			return value;
+		}
+		case LUA_TLIGHTUSERDATA: {
+			alignas(Variant) unsigned char bytes[sizeof(Variant)] = {};
+			if (packed_tag(L, index) && write_plain_variant(L, index, bytes)) {
+				return *reinterpret_cast<Variant *>(bytes);  // plain: nothing to destroy
+			}
+			return Variant();
 		}
 		case LUA_TVECTOR: {
 			// Open question: Vector2 and Vector3 share Luau's vector
@@ -1419,16 +1476,7 @@ void register_globals(lua_State *L) {
 	lua_setfield(L, -2, "__newindex");
 	lua_pushcfunction(L, variant_namecall, "__namecall");
 	lua_setfield(L, -2, "__namecall");
-	lua_pushcfunction(L, variant_operator<Variant::OP_ADD>, "__add");
-	lua_setfield(L, -2, "__add");
-	lua_pushcfunction(L, variant_operator<Variant::OP_SUBTRACT>, "__sub");
-	lua_setfield(L, -2, "__sub");
-	lua_pushcfunction(L, variant_operator<Variant::OP_MULTIPLY>, "__mul");
-	lua_setfield(L, -2, "__mul");
-	lua_pushcfunction(L, variant_operator<Variant::OP_DIVIDE>, "__div");
-	lua_setfield(L, -2, "__div");
-	lua_pushcfunction(L, variant_operator<Variant::OP_EQUAL>, "__eq");
-	lua_setfield(L, -2, "__eq");
+	set_operator_metamethods(L, -1);
 	lua_pushcfunction(L, variant_tostring, "__tostring");
 	lua_setfield(L, -2, "__tostring");
 	lua_setuserdatametatable(L, TAG_VARIANT);

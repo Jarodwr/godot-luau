@@ -53,3 +53,8 @@ evaluator is cheap now. The time is in:
 The first two are the floor for builtin values that aren't stored inline in
 Luau; only types small enough to pack into a tagged light userdata (Vector2i,
 RID) could avoid them.
+
+A later attempt to trim operand classification (type and pointer computed in
+one step) made no measurable difference. See
+[0030](0030-packed-vector2i-and-rid.md) for packed `Vector2i`/`RID`, which do
+avoid the allocation.

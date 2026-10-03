@@ -421,8 +421,10 @@ func bench_api_vector3_math(n: int) -> float:
 
 func bench_api_vector2i_math(n: int) -> int:
 	var a := Vector2i(0, 0)
+	# The step is built outside the loop: GDScript folds constant constructors
+	var step := Vector2i(1, 2)
 	for i in range(1, n + 1):
-		a = a + Vector2i(1, 2)
+		a = a + step
 	return a.y
 
 

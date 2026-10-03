@@ -76,6 +76,32 @@ function Checks:api_checks()
 	check("PackedFloat32Array append/size through references", pf:size() == 3 and pf[2] == 3.5 and #pf == 3)
 	local ps = PackedStringArray({ "a", "b" })
 	check("PackedStringArray methods", ps:has("b") and ps:find("b") == 1)
+	-- Direct constructors match the engine's
+	check("Color(r, g, b) has alpha 1", Color(0.5, 0.25, 1).a == 1 and Color(0.5, 0.25, 1, 0.5).a == 0.5)
+	check("Rect2 from numbers", Rect2(1, 2, 3, 4).size == Vector2(3, 4))
+	check("Rect2i/Vector3i/Vector4 from numbers", Rect2i(1, 2, 3, 4).position == Vector2i(1, 2)
+		and Vector3i(1, 2, 3).z == 3 and Vector4(1, 2, 3, 4).w == 4)
+	check("Vector2i truncates floats", Vector2i(1.9, -1.9) == Vector2i(1, -1))
+	check("Quaternion/Plane from numbers", Quaternion(0, 0, 0, 1).w == 1 and Plane(0, 1, 0, 5).d == 5)
+	-- Packed values (ADR 0030)
+	local vi = Vector2i(3, -4)
+	check("Vector2i fields", vi.x == 3 and vi.y == -4)
+	check("Vector2i maths", (vi + Vector2i(1, 1)) == Vector2i(4, -3) and (vi * 2).y == -8)
+	check("Vector2i maths, more", (vi - Vector2i(1, 1)) == Vector2i(2, -5) and (2 * vi).x == 6
+		and (vi * Vector2i(2, 3)) == Vector2i(6, -12) and (Vector2i(7, 9) / Vector2i(2, 2)) == Vector2i(3, 4))
+	check("Vector2i * float is a Vector2", math.abs((Vector2i(1, 2) * 0.5).x - 0.5) < 1e-6)
+	check("Vector2i equality is by value", Vector2i(1, 2) == Vector2i(1, 2) and Vector2i(1, 2) ~= Vector2i(2, 1))
+	local grid = {}
+	grid[Vector2i(5, 6)] = "cell"
+	check("Vector2i as a table key", grid[Vector2i(5, 6)] == "cell")
+	check("Vector2i methods", vi:abs() == Vector2i(3, 4) and vi:length() == 5)
+	check("Vector2i constant", Vector2i.ONE == Vector2i(1, 1))
+	check("Vector2i ordering", Vector2i(1, 2) < Vector2i(1, 3))
+	check("Vector2i through an Array", Array({ Vector2i(7, 8) })[0] == Vector2i(7, 8))
+	check("Vector2i into Rect2i", Rect2i(Vector2i(1, 2), Vector2i(3, 4)).size == Vector2i(3, 4))
+	check("Vector2i tostring", tostring(Vector2i(1, 2)) == "(1, 2)")
+	local rid = RID()
+	check("RID", rid:get_id() == 0 and not rid:is_valid() and rid == RID())
 	check("method with a default argument, fewer args", Dictionary({ a = 1 }):get("zz") == nil)
 	return results
 end

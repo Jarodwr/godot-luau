@@ -53,3 +53,4 @@ at the same optimisation level.
 | [0027](0027-iteration-and-table-conversion.md) | Iterating Godot collections; Lua tables become Array or Dictionary | Accepted |
 | [0028](0028-validated-operators-for-plain-types.md) | Validated operators for plain builtin types | Accepted |
 | [0029](0029-builtin-method-pointers.md) | Cached method pointers for builtin values | Accepted |
+| [0030](0030-packed-vector2i-and-rid.md) | Vector2i and RID as packed light userdata; direct constructors | Accepted |

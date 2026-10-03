@@ -350,7 +350,8 @@ end
 
 function Bench:bench_api_vector2i_math(n)
 	local a = Vector2i(0, 0)
-	for i = 1, n do a = a + Vector2i(1, 2) end
+	local step = Vector2i(1, 2)
+	for i = 1, n do a = a + step end
 	return a.y
 end
 
