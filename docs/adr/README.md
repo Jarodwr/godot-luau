@@ -54,3 +54,4 @@ at the same optimisation level.
 | [0028](0028-validated-operators-for-plain-types.md) | Validated operators for plain builtin types | Accepted |
 | [0029](0029-builtin-method-pointers.md) | Cached method pointers for builtin values | Accepted |
 | [0030](0030-packed-vector2i-and-rid.md) | Vector2i and RID as packed light userdata; direct constructors | Accepted |
+| [0031](0031-elementwise-arithmetic-and-gc-tuning.md) | Elementwise arithmetic in C; garbage collector settings unchanged | Accepted |

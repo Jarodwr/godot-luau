@@ -111,4 +111,20 @@ function Checks:string_ops(s)
 		s:to_lower(), s:strip_edges(), s:strip_edges(false, true), s:replace("l", "L") }
 end
 
+-- Elementwise operators on builtin values (compared with Godot's in checks.gd)
+function Checks:elementwise_ops()
+	local c1, c2 = Color(0.1, 0.2, 0.3, 0.4), Color(0.7, 0.11, 0.13, 0.17)
+	local v1, v2 = Vector4(1.1, 2.2, 3.3, 4.4), Vector4(0.3, 0.7, 1.9, 2.3)
+	local q1, q2 = Quaternion(0.1, 0.2, 0.3, 0.9), Quaternion(0.4, 0.3, 0.2, 0.1)
+	local i1, i2 = Vector3i(3, -4, 5), Vector3i(7, 8, -9)
+	local j1, j2 = Vector4i(1, 2, 3, 4), Vector4i(-5, 6, 7, 8)
+	return {
+		c1 + c2, c1 - c2, c1 * c2, c1 / c2, c1 * 0.3, 0.3 * c1, c1 / 0.3, c1 * 2,
+		v1 + v2, v1 - v2, v1 * v2, v1 / v2, v1 * 0.3, 0.3 * v1, v1 / 0.3,
+		q1 + q2, q1 - q2, q1 * 0.3, 0.3 * q1, q1 / 0.3, q1 * q2,
+		i1 + i2, i1 - i2, i1 * i2, i1 * 3, 3 * i1, i1 / Vector3i(2, 2, 2), i1 * 1.5,
+		j1 + j2, j1 - j2, j1 * j2, j1 * -2,
+	}
+end
+
 return Checks

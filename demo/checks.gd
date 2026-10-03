@@ -75,6 +75,30 @@ func _initialize() -> void:
 	check(a.echo(Vector2i(9, -9)) == Vector2i(9, -9), "Vector2i round trip through a script")
 	check(typeof(a.echo(Vector2i(1, 1))) == TYPE_VECTOR2I, "Vector2i stays a Vector2i")
 
+	# Elementwise operators: the direct C path must give Godot's exact results
+	var c1 := Color(0.1, 0.2, 0.3, 0.4)
+	var c2 := Color(0.7, 0.11, 0.13, 0.17)
+	var v1 := Vector4(1.1, 2.2, 3.3, 4.4)
+	var v2 := Vector4(0.3, 0.7, 1.9, 2.3)
+	var q1 := Quaternion(0.1, 0.2, 0.3, 0.9)
+	var q2 := Quaternion(0.4, 0.3, 0.2, 0.1)
+	var i1 := Vector3i(3, -4, 5)
+	var i2 := Vector3i(7, 8, -9)
+	var j1 := Vector4i(1, 2, 3, 4)
+	var j2 := Vector4i(-5, 6, 7, 8)
+	var expected_ops := [
+		c1 + c2, c1 - c2, c1 * c2, c1 / c2, c1 * 0.3, 0.3 * c1, c1 / 0.3, c1 * 2,
+		v1 + v2, v1 - v2, v1 * v2, v1 / v2, v1 * 0.3, 0.3 * v1, v1 / 0.3,
+		q1 + q2, q1 - q2, q1 * 0.3, 0.3 * q1, q1 / 0.3, q1 * q2,
+		i1 + i2, i1 - i2, i1 * i2, i1 * 3, 3 * i1, i1 / Vector3i(2, 2, 2), i1 * 1.5,
+		j1 + j2, j1 - j2, j1 * j2, j1 * -2,
+	]
+	var got_ops = a.elementwise_ops()
+	for k in expected_ops.size():
+		var got_value = got_ops[k] if got_ops is Array and k < got_ops.size() else null
+		check(typeof(got_value) == typeof(expected_ops[k]) and got_value == expected_ops[k],
+			"elementwise op %d: %s (got %s)" % [k, expected_ops[k], got_value])
+
 	a.free()
 	print("failures: ", failures)
 	quit(failures)

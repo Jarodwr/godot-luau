@@ -618,8 +618,117 @@ static bool packed_vector2i_arith(lua_State *L, int op) {
 	return true;
 }
 
+// Elementwise arithmetic on builtin values held in Variant userdata, done in
+// C with Godot's component types (float32 for Color/Vector4/Quaternion, int32
+// for Vector3i/Vector4i). Covers what the engine also does elementwise; the
+// rest (Quaternion * Quaternion, integer division, which reports division by
+// zero) goes to the engine.
+namespace {
+
+struct Elementwise {
+	Variant::Type type;
+	int count;       // components
+	bool integer;    // int32 components (else float32)
+	bool by_value;   // same-type operands allowed for * and / (not for Quaternion)
+};
+
+const Elementwise *elementwise_info(int32_t type) {
+	static const Elementwise color = { Variant::COLOR, 4, false, true };
+	static const Elementwise vector4 = { Variant::VECTOR4, 4, false, true };
+	static const Elementwise quaternion = { Variant::QUATERNION, 4, false, false };
+	static const Elementwise vector3i = { Variant::VECTOR3I, 3, true, true };
+	static const Elementwise vector4i = { Variant::VECTOR4I, 4, true, true };
+	switch (type) {
+		case Variant::COLOR: return &color;
+		case Variant::VECTOR4: return &vector4;
+		case Variant::QUATERNION: return &quaternion;
+		case Variant::VECTOR3I: return &vector3i;
+		case Variant::VECTOR4I: return &vector4i;
+		default: return nullptr;
+	}
+}
+
+// The Variant data of `held` if it holds exactly `type`, or null
+inline const unsigned char *data_if(const unsigned char *held, int32_t type) {
+	return held && *reinterpret_cast<const int32_t *>(held) == type ? held + VARIANT_DATA : nullptr;
+}
+
+} // namespace
+
+static bool elementwise_arith(lua_State *L, int op) {
+	if (op != Variant::OP_ADD && op != Variant::OP_SUBTRACT && op != Variant::OP_MULTIPLY && op != Variant::OP_DIVIDE) {
+		return false;
+	}
+	// The value operand decides the type
+	const unsigned char *held_a = (const unsigned char *)lua_touserdatatagged(L, 1, TAG_VARIANT);
+	const unsigned char *held_b = (const unsigned char *)lua_touserdatatagged(L, 2, TAG_VARIANT);
+	const unsigned char *any = held_a ? held_a : held_b;
+	if (any == nullptr) {
+		return false;
+	}
+	const Elementwise *info = elementwise_info(*reinterpret_cast<const int32_t *>(any));
+	if (info == nullptr) {
+		return false;
+	}
+	const unsigned char *a = data_if(held_a, info->type);
+	const unsigned char *b = data_if(held_b, info->type);
+	bool scalar_a = a == nullptr, scalar_b = b == nullptr;
+	if (scalar_a && scalar_b) {
+		return false;
+	}
+	double scalar = 0;
+	if (scalar_a || scalar_b) {
+		int index = scalar_a ? 1 : 2;
+		if (lua_type(L, index) != LUA_TNUMBER) return false;
+		scalar = lua_tonumber(L, index);
+		// value * n, n * value, value / n only
+		if (op == Variant::OP_ADD || op == Variant::OP_SUBTRACT) return false;
+		if (op == Variant::OP_DIVIDE && scalar_b == false) return false;
+		if (info->integer) {
+			// integer vectors: only * by an integer (Vector3i * 1.5 is a Vector3)
+			if (op != Variant::OP_MULTIPLY || scalar != (double)(int64_t)scalar) return false;
+		}
+	} else if ((op == Variant::OP_MULTIPLY || op == Variant::OP_DIVIDE) && !info->by_value) {
+		return false;
+	}
+	if (info->integer && op == Variant::OP_DIVIDE) {
+		return false;  // the engine reports division by zero
+	}
+	unsigned char *box = (unsigned char *)lua_newuserdatataggedwithmetatable(L, sizeof(Variant), TAG_VARIANT);
+	*reinterpret_cast<int64_t *>(box) = info->type;  // type tag and padding
+	unsigned char *out = box + VARIANT_DATA;
+	if (info->count == 3) {
+		reinterpret_cast<int32_t *>(out)[3] = 0;  // the rest of the data
+	}
+	for (int i = 0; i < info->count; i++) {
+		if (info->integer) {
+			uint32_t x = scalar_a ? (uint32_t)(int32_t)(int64_t)scalar : (uint32_t)reinterpret_cast<const int32_t *>(a)[i];
+			uint32_t y = scalar_b ? (uint32_t)(int32_t)(int64_t)scalar : (uint32_t)reinterpret_cast<const int32_t *>(b)[i];
+			uint32_t r = op == Variant::OP_ADD ? x + y : op == Variant::OP_SUBTRACT ? x - y : x * y;
+			reinterpret_cast<int32_t *>(out)[i] = (int32_t)r;
+		} else {
+			float x = scalar_a ? (float)scalar : reinterpret_cast<const float *>(a)[i];
+			float y = scalar_b ? (float)scalar : reinterpret_cast<const float *>(b)[i];
+			float r;
+			if (op == Variant::OP_DIVIDE && scalar_b && info->type == Variant::QUATERNION) {
+				r = x * (1.0f / y);  // Godot's Quaternion / scalar multiplies by the reciprocal
+			} else {
+				r = op == Variant::OP_ADD ? x + y : op == Variant::OP_SUBTRACT ? x - y : op == Variant::OP_MULTIPLY ? x * y : x / y;
+			}
+			reinterpret_cast<float *>(out)[i] = r;
+		}
+	}
+	return true;
+}
+
 bool call_validated_operator(lua_State *L, int op) {
-	if (PACKED_VALUES && packed_vector2i_arith(L, op)) {
+	// Packed values (light userdata) or values in userdata: try the matching
+	// direct path first
+	if (PACKED_VALUES && (lua_type(L, 1) == LUA_TLIGHTUSERDATA || lua_type(L, 2) == LUA_TLIGHTUSERDATA)) {
+		if (packed_vector2i_arith(L, op)) {
+			return true;
+		}
+	} else if (elementwise_arith(L, op)) {
 		return true;
 	}
 	if (!builtin_layout_ok || op < 0 || op >= CACHED_OPS) {
