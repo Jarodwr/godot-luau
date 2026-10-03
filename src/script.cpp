@@ -23,6 +23,7 @@ struct Instance {
 	Ref<LuauScript> script;
 	GDExtensionObjectPtr owner;
 	ClassInfo *cls;
+	LuauScript::Routes *routes;
 	int table_ref = LUA_NOREF;  // T
 	int cache_ref = LUA_NOREF;  // B
 	int meta_ref = LUA_NOREF;   // M
@@ -58,6 +59,43 @@ GDExtensionObjectPtr self_table_owner(lua_State *L, int index) {
 	return instance ? instance->owner : nullptr;
 }
 
+// Whether the script defines a function named like the key at index 2
+static bool is_script_function(lua_State *L, Instance *instance) {
+	lua_getref(L, instance->script->class_ref);
+	lua_pushvalue(L, 2);
+	bool is_function = lua_rawget(L, -2) == LUA_TFUNCTION;
+	lua_pop(L, 2);
+	return is_function;
+}
+
+// The route of the string key at index 2 (copied: resolving members can run
+// scripts, which may grow the table)
+static LuauScript::Route route_of(lua_State *L, Instance *instance, int atom) {
+	if (atom < 0) {
+		LuauScript::Route route;
+		route.kind = is_script_function(L, instance) ? LuauScript::ROUTE_SCRIPT : LuauScript::ROUTE_ENGINE;
+		if (route.kind == LuauScript::ROUTE_ENGINE) {
+			route.member = &instance->cls->member(StringName(lua_tostring(L, 2)));
+		}
+		return route;
+	}
+	std::vector<LuauScript::Route> &by_atom = instance->routes->by_atom;
+	if ((size_t)atom >= by_atom.size()) {
+		by_atom.resize(atom + 1);
+	}
+	if (by_atom[atom].kind == LuauScript::ROUTE_UNRESOLVED) {
+		LuauScript::Route route;
+		if (is_script_function(L, instance)) {
+			route.kind = LuauScript::ROUTE_SCRIPT;
+		} else {
+			route.kind = LuauScript::ROUTE_ENGINE;
+			route.member = &instance->cls->member(atom);
+		}
+		instance->routes->by_atom[atom] = route;
+	}
+	return instance->routes->by_atom[atom];
+}
+
 // B's __index: names neither in T nor cached in B
 static int cache_index(lua_State *L) {
 	Instance *instance = instance_in(L, 1);
@@ -68,19 +106,18 @@ static int cache_index(lua_State *L) {
 		lua_pushnil(L);
 		return 1;
 	}
-	// Script functions
-	lua_getref(L, instance->script->class_ref);
-	lua_pushvalue(L, 2);
-	if (lua_rawget(L, -2) == LUA_TFUNCTION) {
+	LuauScript::Route route = route_of(L, instance, string_atom(L, 2));
+	if (route.kind == LuauScript::ROUTE_SCRIPT) {
+		// Cache the script function in B
+		lua_getref(L, instance->script->class_ref);
+		lua_pushvalue(L, 2);
+		lua_rawget(L, -2);
 		lua_pushvalue(L, 2);
 		lua_pushvalue(L, -2);
 		lua_rawset(L, 1);
 		return 1;
 	}
-	lua_pop(L, 2);
-	// Engine members
-	int atom = string_atom(L, 2);
-	const Member &member = atom >= 0 ? instance->cls->member(atom) : instance->cls->member(StringName(lua_tostring(L, 2)));
+	const Member &member = *route.member;
 	switch (member.kind) {
 		case MemberKind::METHOD:
 			push_member_method(L, member);
@@ -109,10 +146,9 @@ static int self_newindex(lua_State *L) {
 		luaL_error(L, "attempt to use a freed object");
 	}
 	if (lua_type(L, 2) == LUA_TSTRING) {
-		int atom = string_atom(L, 2);
-		const Member &member = atom >= 0 ? instance->cls->member(atom) : instance->cls->member(StringName(lua_tostring(L, 2)));
-		if (member.kind == MemberKind::PROPERTY) {
-			if (!set_property(L, instance->owner, member, 3)) {
+		LuauScript::Route route = route_of(L, instance, string_atom(L, 2));
+		if (route.kind == LuauScript::ROUTE_ENGINE && route.member->kind == MemberKind::PROPERTY) {
+			if (!set_property(L, instance->owner, *route.member, 3)) {
 				lua_error(L);
 			}
 			return 0;
@@ -194,12 +230,12 @@ static const GDExtensionMethodInfo *get_method_list_func(Instance *, uint32_t *r
 static void free_method_list_func(Instance *, const GDExtensionMethodInfo *, uint32_t) {}
 
 static GDExtensionBool has_method_func(Instance *instance, GDExtensionConstStringNamePtr name) {
-	return instance->script->methods.has(*(const StringName *)name);
+	return instance->script->find_method(*(const StringName *)name) != nullptr;
 }
 
 static void call_func(Instance *instance, GDExtensionConstStringNamePtr method, const GDExtensionConstVariantPtr *args,
 		GDExtensionInt argc, GDExtensionVariantPtr r_ret, GDExtensionCallError *r_error) {
-	const int *ref = instance->script->methods.getptr(*(const StringName *)method);
+	const int *ref = instance->script->find_method(*(const StringName *)method);
 	if (ref == nullptr) {
 		r_error->error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 		return;
@@ -216,7 +252,7 @@ static void call_func(Instance *instance, GDExtensionConstStringNamePtr method, 
 		lua_pop(L, 1);
 		return;
 	}
-	*(Variant *)r_ret = to_variant(L, -1);
+	to_variant_into_nil(L, -1, (Variant *)r_ret);
 	lua_pop(L, 1);
 }
 
@@ -282,7 +318,17 @@ static GDExtensionScriptInstanceInfo3 instance_info = [] {
 
 // ---------------------------------------------------------------- script
 
+LuauScript::Routes *LuauScript::routes_for(const void *class_info) {
+	if (Routes **existing = routes.getptr(class_info)) {
+		return *existing;
+	}
+	return routes.insert(class_info, new Routes())->value;
+}
+
 LuauScript::~LuauScript() {
+	for (auto &[cls, table] : routes) {
+		delete table;
+	}
 	lua_State *L = state();
 	if (L == nullptr) {
 		return;
@@ -300,6 +346,7 @@ void *LuauScript::_instance_create(Object *p_for_object) const {
 	instance->script = Ref<LuauScript>(const_cast<LuauScript *>(this));
 	instance->owner = p_for_object->_owner;
 	instance->cls = class_info_of(instance->owner);
+	instance->routes = const_cast<LuauScript *>(this)->routes_for(instance->cls);
 	create_self_table(state(), instance);
 	instances.insert(instance->owner, instance);
 	return gdextension_interface::script_instance_create3(&instance_info, instance);
@@ -315,6 +362,10 @@ Error LuauScript::_reload(bool p_keep_state) {
 		lua_unref(L, ref);
 	}
 	methods.clear();
+	methods_by_ptr.clear();
+	for (auto &[cls, table] : routes) {
+		table->by_atom.clear();  // instances keep their pointers
+	}
 
 	String code = source;
 	if (get_path().get_extension() == "fnl") {
@@ -342,7 +393,10 @@ Error LuauScript::_reload(bool p_keep_state) {
 	lua_pushnil(L);
 	while (lua_next(L, -2)) {
 		if (lua_type(L, -2) == LUA_TSTRING && lua_type(L, -1) == LUA_TFUNCTION) {
-			methods.insert(StringName(lua_tostring(L, -2)), lua_ref(L, -1));
+			StringName name(lua_tostring(L, -2));
+			int ref = lua_ref(L, -1);
+			methods.insert(name, ref);
+			methods_by_ptr.insert(name_ptr(name), ref);
 		}
 		lua_pop(L, 1);
 	}

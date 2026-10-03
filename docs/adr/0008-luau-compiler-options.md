@@ -1,6 +1,6 @@
 # 0008. Compile scripts with optimisation level 2 and vector constructors
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-03
 
 ## Context
@@ -25,3 +25,24 @@ compiler recognises, or stays a call if the options can't express it.
 - Level 2 inlining assumes globals aren't reassigned between calls. That is
   already true unless a script replaces built-ins on purpose.
 - Measure the `vm_*` cases, `api_vector2_math` and `process_nodes`.
+
+## Result
+
+ns per op, measured with `tools/bench.sh` (9 repeats, macOS arm64). Each
+row compares the build before and after this change.
+
+Implemented with `optimizationLevel = 2`, `vectorCtor = "Vector2"` (the
+option takes one name; `Vector3` stays a C function).
+
+Measuring showed the globals table was never marked *safe*, which Luau
+requires before it caches global lookups (`GETIMPORT`) or runs builtin fast
+calls. The table is now marked safe once setup is done. Fennel calls `setfenv`
+only on its own macro environments, so `_G` stays safe. Consequence: a script
+that replaces a global after other scripts have loaded may not be seen by
+lookups those scripts already cached.
+
+| Case | Before | After | GDScript |
+|---|---:|---:|---:|
+| `api_singleton_call` | 22.9 | 19.3 | 13.2 |
+| `api_vector2_field` | 2.1 | 1.5 | 8.5 |
+| `vm_function_calls` | 7.3 | 4.7 | 54.0 |

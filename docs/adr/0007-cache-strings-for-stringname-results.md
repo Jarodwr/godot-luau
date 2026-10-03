@@ -1,6 +1,6 @@
 # 0007. Cache Lua strings for returned `StringName`s
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-03
 
 ## Context
@@ -25,3 +25,16 @@ bounded and cleared with the state.
 - Repeated names cost one pointer lookup and a push.
 - Memory grows with the number of distinct names returned, up to the bound.
 - Measure `api_object_method`.
+
+## Result
+
+ns per op, measured with `tools/bench.sh` (9 repeats, macOS arm64). Each
+row compares the build before and after this change.
+
+Implemented (`push_string_name`, bounded at 4096 names). The `StringName`
+return slot is also zero-filled instead of constructed: zeroed bytes are a
+valid empty `StringName`, which saves an engine call.
+
+| Case | Before | After | GDScript |
+|---|---:|---:|---:|
+| `api_object_method` | 122.8 | 42.4 | 18.0 |

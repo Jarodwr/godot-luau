@@ -95,6 +95,10 @@ void push_object_get(lua_State *L, GDExtensionObjectPtr object, const StringName
 // ---- Values
 void push_variant(lua_State *L, const Variant &value);
 Variant to_variant(lua_State *L, int index);
+// Writes the value at `index` into `r_dest`, which must hold nil (as Godot's
+// return slots do). Moves bytes instead of using godot-cpp's Variant move,
+// which swaps byte by byte out of line (docs/adr/0002).
+void to_variant_into_nil(lua_State *L, int index, Variant *r_dest);
 // Pushes an engine object as Luau userdata (or the script's self table)
 void push_object(lua_State *L, GDExtensionObjectPtr object);
 // The engine object of the value at `index` (object userdata or self table),

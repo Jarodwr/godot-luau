@@ -1,13 +1,14 @@
-# godot-luau-spike
+# godot-luau
 
-A deliberately small Luau scripting extension for Godot 4.5+. It exists to
-answer three questions:
+Luau scripting for Godot 4.5+, with Fennel support: a small binding that builds
+in seconds and runs close to GDScript.
+
+It started as an experiment to answer three questions:
 - How fast does a Luau binding build?
 - How close does it get to GDScript?
 - Does Fennel run on it?
 
-The findings are recorded in fennel-gdextension's
-`docs/perf/15-luau-spike.md`.
+The results are in fennel-gdextension's `docs/perf/15-luau-spike.md`.
 
 ## Build
 
@@ -35,6 +36,35 @@ use it through a symlink.
 - Native arch for dev builds.
 - Engine bindings as generated **data** (`tools/gen_api_data.py` →
   `api_data.inc`), not code.
+
+## Performance
+
+ns per op, `tools/bench.sh` (9 repeats, macOS arm64, Godot 4.7 editor build).
+All checksums match GDScript.
+
+| Case | GDScript | godot-luau |
+|---|---:|---:|
+| Bare call into a script (`call_noop`) | 38 | 36 |
+| Two ints in, one out (`call_add2`) | 60 | 53 |
+| Script field read+write (`api_dynamic_field`) | 6.8 | 5.2 |
+| Own method via `self` (`api_self_method`) | 53 | 8.6 |
+| Engine property read (`api_object_prop_get`) | 19 | 32 |
+| Engine property write (`api_object_prop_set`) | 27 | 39 |
+| Engine method + string method (`api_object_method`) | 18 | 43 |
+| Singleton method (`api_singleton_call`) | 13 | 20 |
+| Two Vector2 operations (`api_vector2_math`) | 9.1 | 1.9 |
+| `_process` per node, 20,000 movers | 145 | 151 (Fennel: 146 vs 151) |
+
+Engine property access is the remaining gap: `self.position` misses two Luau
+tables before reaching C ([0010](docs/adr/0010-self-stays-a-table.md)).
+
+To benchmark:
+
+```sh
+GODOT_BIN=/path/to/godot tools/bench.sh /tmp/run.json --repeats=9
+```
+
+To profile, build the `profile` preset (same optimisation, with symbols).
 
 ## Scripts
 
@@ -99,6 +129,3 @@ Design decisions and proposed changes are recorded in [`docs/adr/`](docs/adr/REA
   LuaJIT).
 - **No exports, signals, script inheritance, tool scripts, editor features or
   debugging.** One Luau state, main thread only.
-- **Engine methods returning strings convert to Lua strings on every call.**
-  `get_name():length()` is 106 ns vs 18 for GDScript; caching those strings
-  per name would help.

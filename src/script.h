@@ -7,6 +7,8 @@
 #include <godot_cpp/templates/hash_map.hpp>
 #include <lua.h>
 
+#include <vector>
+
 namespace luau {
 
 using namespace godot;
@@ -18,6 +20,7 @@ bool push_self_table(lua_State *L, GDExtensionObjectPtr object);
 GDExtensionObjectPtr self_table_owner(lua_State *L, int index);
 
 class LuauLanguage;
+struct Member;
 
 class LuauScript : public ScriptExtension {
 	GDCLASS(LuauScript, ScriptExtension);
@@ -28,6 +31,25 @@ public:
 	StringName base_type = "RefCounted";
 	int class_ref = LUA_NOREF;          // the table the script returned
 	HashMap<StringName, int> methods;   // name → function ref
+	// Same, keyed by the StringName's interned data pointer: no string hashing
+	// per call (docs/adr/0003). `methods` keeps the names alive.
+	HashMap<const void *, int> methods_by_ptr;
+
+	// What a name missing from a self table resolves to, per owner class and
+	// name atom (docs/adr/0005). Filled on first use, emptied on reload.
+	enum RouteKind : uint8_t { ROUTE_UNRESOLVED, ROUTE_SCRIPT, ROUTE_ENGINE };
+	struct Route {
+		RouteKind kind = ROUTE_UNRESOLVED;
+		const Member *member = nullptr;  // ROUTE_ENGINE
+	};
+	struct Routes {
+		std::vector<Route> by_atom;
+	};
+	HashMap<const void *, Routes *> routes;  // by ClassInfo
+	Routes *routes_for(const void *class_info);
+
+	static const void *name_ptr(const StringName &name) { return *reinterpret_cast<const void *const *>(name._native_ptr()); }
+	const int *find_method(const StringName &name) const { return methods_by_ptr.getptr(name_ptr(name)); }
 
 	~LuauScript();
 
@@ -48,7 +70,7 @@ public:
 	StringName _get_doc_class_name() const override { return {}; }
 	TypedArray<Dictionary> _get_documentation() const override { return {}; }
 	String _get_class_icon_path() const override { return {}; }
-	bool _has_method(const StringName &p_method) const override { return methods.has(p_method); }
+	bool _has_method(const StringName &p_method) const override { return find_method(p_method) != nullptr; }
 	bool _has_static_method(const StringName &) const override { return false; }
 	Variant _get_script_method_argument_count(const StringName &) const override { return {}; }
 	Dictionary _get_method_info(const StringName &) const override { return {}; }

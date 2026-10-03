@@ -11,6 +11,9 @@
 #include <godot_cpp/variant/vector3.hpp>
 #include <godot_cpp/classes/file_access.hpp>
 #include <luacode.h>
+#ifdef GODOT_LUAU_CODEGEN
+#include <luacodegen.h>
+#endif
 #include <lualib.h>
 
 #include <cstring>
@@ -289,7 +292,11 @@ static bool to_native(lua_State *L, int index, ArgType type, NativeSlot &slot) {
 static void prepare_return(ArgType type, NativeSlot &slot) {
 	switch (type) {
 		case T_STRING: new (slot.bytes) String(); slot.constructed = T_STRING; break;
-		case T_STRING_NAME: new (slot.bytes) StringName(); slot.constructed = T_STRING_NAME; break;
+		case T_STRING_NAME:
+			// Zeroed bytes are an empty StringName (null data): no constructor call
+			memset(slot.bytes, 0, sizeof(StringName));
+			slot.constructed = T_STRING_NAME;
+			break;
 		case T_VARIANT: new (slot.bytes) Variant(); slot.constructed = T_VARIANT; break;
 		default: break;
 	}
@@ -300,6 +307,27 @@ static void push_string(lua_State *L, const String &s) {
 	lua_pushlstring(L, utf8.get_data(), utf8.length());
 }
 
+// Lua strings for StringNames returned by the engine, keyed by the interned
+// data pointer (docs/adr/0007). The StringName copy keeps the pointer valid.
+struct CachedName {
+	StringName name;
+	int ref;
+};
+static HashMap<const void *, CachedName> name_strings;
+constexpr int MAX_NAME_STRINGS = 4096;
+
+static void push_string_name(lua_State *L, const StringName &name) {
+	const void *key = *reinterpret_cast<const void *const *>(name._native_ptr());
+	if (const CachedName *cached = name_strings.getptr(key)) {
+		lua_getref(L, cached->ref);
+		return;
+	}
+	push_string(L, String(name));
+	if (key != nullptr && name_strings.size() < MAX_NAME_STRINGS) {
+		name_strings.insert(key, { name, lua_ref(L, -1) });
+	}
+}
+
 static void push_native(lua_State *L, ArgType type, NativeSlot &slot) {
 	switch (type) {
 		case T_VOID: lua_pushnil(L); break;
@@ -307,7 +335,7 @@ static void push_native(lua_State *L, ArgType type, NativeSlot &slot) {
 		case T_INT: lua_pushnumber(L, (double)*reinterpret_cast<int64_t *>(slot.bytes)); break;
 		case T_FLOAT: lua_pushnumber(L, *reinterpret_cast<double *>(slot.bytes)); break;
 		case T_STRING: push_string(L, *reinterpret_cast<String *>(slot.bytes)); break;
-		case T_STRING_NAME: push_string(L, String(*reinterpret_cast<StringName *>(slot.bytes))); break;
+		case T_STRING_NAME: push_string_name(L, *reinterpret_cast<StringName *>(slot.bytes)); break;
 		case T_VECTOR2: {
 			const float *v = reinterpret_cast<float *>(slot.bytes);
 			lua_pushvector(L, v[0], v[1], 0.0f);
@@ -434,7 +462,91 @@ static bool generic_call(lua_State *L, GDExtensionObjectPtr object, const String
 	return true;
 }
 
+// Getters and setters of the common types skip call_method's generic
+// marshalling (docs/adr/0006)
+static bool fast_get(lua_State *L, GDExtensionObjectPtr object, const Method &getter) {
+	if (!getter.ptrcall) {
+		return false;
+	}
+	switch (getter.info->ret) {
+		case T_VECTOR2: {
+			float v[2];
+			gdextension_interface::object_method_bind_ptrcall(getter.bind, object, nullptr, v);
+			lua_pushvector(L, v[0], v[1], 0.0f);
+			return true;
+		}
+		case T_VECTOR3: {
+			float v[3];
+			gdextension_interface::object_method_bind_ptrcall(getter.bind, object, nullptr, v);
+			lua_pushvector(L, v[0], v[1], v[2]);
+			return true;
+		}
+		case T_FLOAT: {
+			double d;
+			gdextension_interface::object_method_bind_ptrcall(getter.bind, object, nullptr, &d);
+			lua_pushnumber(L, d);
+			return true;
+		}
+		case T_INT: {
+			int64_t i;
+			gdextension_interface::object_method_bind_ptrcall(getter.bind, object, nullptr, &i);
+			lua_pushnumber(L, (double)i);
+			return true;
+		}
+		case T_BOOL: {
+			GDExtensionBool b;
+			gdextension_interface::object_method_bind_ptrcall(getter.bind, object, nullptr, &b);
+			lua_pushboolean(L, b);
+			return true;
+		}
+		default:
+			return false;
+	}
+}
+
+static bool fast_set(lua_State *L, GDExtensionObjectPtr object, const Method &setter, int index) {
+	if (!setter.ptrcall) {
+		return false;
+	}
+	union {
+		float v[3];
+		double d;
+		int64_t i;
+		GDExtensionBool b;
+	} value;
+	switch (setter.info->args[0]) {
+		case T_VECTOR2:
+		case T_VECTOR3: {
+			const float *v = lua_tovector(L, index);
+			if (v == nullptr) return false;
+			value.v[0] = v[0];
+			value.v[1] = v[1];
+			value.v[2] = v[2];
+			break;
+		}
+		case T_FLOAT:
+			if (lua_type(L, index) != LUA_TNUMBER) return false;
+			value.d = lua_tonumber(L, index);
+			break;
+		case T_INT:
+			if (lua_type(L, index) != LUA_TNUMBER) return false;
+			value.i = (int64_t)lua_tonumber(L, index);
+			break;
+		case T_BOOL:
+			value.b = lua_toboolean(L, index);
+			break;
+		default:
+			return false;
+	}
+	GDExtensionConstTypePtr argv[] = { &value };
+	gdextension_interface::object_method_bind_ptrcall(setter.bind, object, argv, nullptr);
+	return true;
+}
+
 bool get_property(lua_State *L, GDExtensionObjectPtr object, const Member &member) {
+	if (fast_get(L, object, member.getter)) {
+		return true;
+	}
 	if (member.getter.bind) {
 		return call_method(L, object, member.getter, 0, 0);
 	}
@@ -444,6 +556,9 @@ bool get_property(lua_State *L, GDExtensionObjectPtr object, const Member &membe
 
 bool set_property(lua_State *L, GDExtensionObjectPtr object, const Member &member, int index) {
 	index = lua_absindex(L, index);
+	if (fast_set(L, object, member.setter, index)) {
+		return true;
+	}
 	if (member.setter.bind) {
 		bool ok = call_method(L, object, member.setter, index, 1);
 		lua_pop(L, 1);
@@ -644,14 +759,115 @@ static int variant_tostring(lua_State *L) {
 
 // ---------------------------------------------------------------- conversions
 
+// ---- Plain Variants read and written as bytes (docs/adr/0004)
+//
+// Godot's Variant is { int32 type; padding; union data } with the data at
+// offset 8. Checked once at startup; if it doesn't hold, the engine calls are
+// used instead.
+static bool variant_bytes_ok = false;
+constexpr size_t VARIANT_DATA = 8;
+
+static void check_variant_layout() {
+	auto type_of = [](const Variant &v) { return *reinterpret_cast<const int32_t *>(v._native_ptr()); };
+	auto data = [](const Variant &v) { return reinterpret_cast<const unsigned char *>(v._native_ptr()) + VARIANT_DATA; };
+	Variant b = true, i = int64_t(-7), f = 2.5, v2 = Vector2(1.5f, -2.0f), v3 = Vector3(1.0f, 2.0f, 3.0f), nil;
+	variant_bytes_ok = type_of(nil) == Variant::NIL && type_of(b) == Variant::BOOL && type_of(i) == Variant::INT
+			&& type_of(f) == Variant::FLOAT && type_of(v2) == Variant::VECTOR2 && type_of(v3) == Variant::VECTOR3
+			&& *reinterpret_cast<const bool *>(data(b)) == true
+			&& *reinterpret_cast<const int64_t *>(data(i)) == -7
+			&& *reinterpret_cast<const double *>(data(f)) == 2.5
+			&& reinterpret_cast<const float *>(data(v2))[0] == 1.5f && reinterpret_cast<const float *>(data(v2))[1] == -2.0f
+			&& reinterpret_cast<const float *>(data(v3))[2] == 3.0f;
+	if (!variant_bytes_ok) {
+		UtilityFunctions::push_warning("godot-luau: unexpected Variant layout; using slower conversions");
+	}
+}
+
+// Pushes `value` from its bytes if it's a plain type; false otherwise
+static bool push_plain_variant(lua_State *L, const Variant &value) {
+	if (!variant_bytes_ok) {
+		return false;
+	}
+	const unsigned char *bytes = reinterpret_cast<const unsigned char *>(value._native_ptr());
+	const unsigned char *data = bytes + VARIANT_DATA;
+	switch (*reinterpret_cast<const int32_t *>(bytes)) {
+		case Variant::NIL: lua_pushnil(L); return true;
+		case Variant::BOOL: lua_pushboolean(L, *reinterpret_cast<const bool *>(data)); return true;
+		case Variant::INT: lua_pushnumber(L, (double)*reinterpret_cast<const int64_t *>(data)); return true;
+		case Variant::FLOAT: lua_pushnumber(L, *reinterpret_cast<const double *>(data)); return true;
+		case Variant::VECTOR2: {
+			const float *v = reinterpret_cast<const float *>(data);
+			lua_pushvector(L, v[0], v[1], 0.0f);
+			return true;
+		}
+		case Variant::VECTOR3: {
+			const float *v = reinterpret_cast<const float *>(data);
+			lua_pushvector(L, v[0], v[1], v[2]);
+			return true;
+		}
+		default: return false;
+	}
+}
+
+// Writes the value at `index` as a plain Variant into uninitialized `memory`;
+// false (nothing written) if it isn't one
+static bool write_plain_variant(lua_State *L, int index, void *memory) {
+	if (!variant_bytes_ok) {
+		return false;
+	}
+	unsigned char *bytes = static_cast<unsigned char *>(memory);
+	unsigned char *data = bytes + VARIANT_DATA;
+	int32_t type;
+	switch (lua_type(L, index)) {
+		case LUA_TNIL:
+			type = Variant::NIL;
+			break;
+		case LUA_TBOOLEAN:
+			type = Variant::BOOL;
+			*reinterpret_cast<bool *>(data) = lua_toboolean(L, index);
+			break;
+		case LUA_TNUMBER: {
+			double d = lua_tonumber(L, index);
+			if (d == (double)(int64_t)d && d > -9007199254740992.0 && d < 9007199254740992.0) {
+				type = Variant::INT;
+				*reinterpret_cast<int64_t *>(data) = (int64_t)d;
+			} else {
+				type = Variant::FLOAT;
+				*reinterpret_cast<double *>(data) = d;
+			}
+			break;
+		}
+		case LUA_TVECTOR: {
+			const float *v = lua_tovector(L, index);
+			float *out = reinterpret_cast<float *>(data);
+			out[0] = v[0];
+			out[1] = v[1];
+			if (v[2] == 0.0f) {
+				type = Variant::VECTOR2;
+			} else {
+				type = Variant::VECTOR3;
+				out[2] = v[2];
+			}
+			break;
+		}
+		default:
+			return false;
+	}
+	*reinterpret_cast<int32_t *>(bytes) = type;
+	return true;
+}
+
 void push_variant(lua_State *L, const Variant &value) {
+	if (push_plain_variant(L, value)) {
+		return;
+	}
 	switch (value.get_type()) {
 		case Variant::NIL: lua_pushnil(L); break;
 		case Variant::BOOL: lua_pushboolean(L, (bool)value); break;
 		case Variant::INT: lua_pushnumber(L, (double)(int64_t)value); break;
 		case Variant::FLOAT: lua_pushnumber(L, (double)value); break;
 		case Variant::STRING: push_string(L, value); break;
-		case Variant::STRING_NAME: push_string(L, String((StringName)value)); break;
+		case Variant::STRING_NAME: push_string_name(L, (StringName)value); break;
 		case Variant::VECTOR2: {
 			Vector2 v = value;
 			lua_pushvector(L, v.x, v.y, 0.0f);
@@ -692,7 +908,7 @@ Variant to_variant(lua_State *L, int index) {
 			return String::utf8(s, (int)length);
 		}
 		case LUA_TVECTOR: {
-			// Open question of the spike: Vector2 and Vector3 share Luau's vector
+			// Open question: Vector2 and Vector3 share Luau's vector
 			const float *v = lua_tovector(L, index);
 			if (v[2] == 0.0f) {
 				return Vector2(v[0], v[1]);
@@ -721,6 +937,19 @@ Variant to_variant(lua_State *L, int index) {
 		default:
 			return Variant();
 	}
+}
+
+void to_variant_into_nil(lua_State *L, int index, Variant *r_dest) {
+	if (lua_isnil(L, index)) {
+		return;
+	}
+	// Constructed in place (no move), then relocated: r_dest held nil, so
+	// there's nothing to destroy there, and the buffer is never destroyed
+	alignas(Variant) unsigned char buffer[sizeof(Variant)] = {};
+	if (!write_plain_variant(L, index, buffer)) {
+		new (buffer) Variant(to_variant(L, index));
+	}
+	memcpy((void *)r_dest, buffer, sizeof(Variant));
 }
 
 // ---------------------------------------------------------------- globals
@@ -864,13 +1093,31 @@ static int loadstring(lua_State *L) {
 	return 1;
 }
 
+// Scripts (and Fennel's output) compile with inlining and with `Vector2(x, y)`
+// recognised as a vector constructor (docs/adr/0008)
+static lua_CompileOptions *compile_options() {
+	static lua_CompileOptions options = [] {
+		lua_CompileOptions o = {};
+		o.optimizationLevel = 2;
+		o.debugLevel = 1;
+		o.vectorCtor = "Vector2";
+		return o;
+	}();
+	return &options;
+}
+
 bool load_chunk(lua_State *L, const String &source, const String &chunkname) {
 	CharString code = source.utf8();
 	CharString name = chunkname.utf8();
 	size_t bytecode_size = 0;
-	char *bytecode = luau_compile(code.get_data(), code.length(), nullptr, &bytecode_size);
+	char *bytecode = luau_compile(code.get_data(), code.length(), compile_options(), &bytecode_size);
 	int status = luau_load(L, name.get_data(), bytecode, bytecode_size, 0);
 	::free(bytecode);
+#ifdef GODOT_LUAU_CODEGEN
+	if (status == 0 && luau_codegen_supported()) {
+		luau_codegen_compile(L, -1);
+	}
+#endif
 	return status == 0;
 }
 
@@ -934,7 +1181,13 @@ bool compile_fennel(lua_State *L, const String &source, const String &path, Stri
 
 void open_state() {
 	L_main = luaL_newstate();
+#ifdef GODOT_LUAU_CODEGEN
+	if (luau_codegen_supported()) {
+		luau_codegen_create(L_main);
+	}
+#endif
 	lua_callbacks(L_main)->useratom = user_atom;
+	check_variant_layout();
 	luaL_openlibs(L_main);
 	lua_pushcfunction(L_main, loadstring, "loadstring");
 	lua_setglobal(L_main, "loadstring");
@@ -943,9 +1196,14 @@ void open_state() {
 	}
 	register_globals(L_main);
 	load_fennel(L_main);
+	// Globals are set up: let loaded code cache global lookups and use the
+	// builtin fast calls. Fennel only calls setfenv on its own macro
+	// environments, so this stays set (docs/adr/0008).
+	lua_setsafeenv(L_main, LUA_GLOBALSINDEX, true);
 }
 
 void close_state() {
+	name_strings.clear();
 	if (L_main) {
 		lua_close(L_main);
 		L_main = nullptr;

@@ -1,4 +1,4 @@
 config_version=5
 
 [application]
-config/name="Luau spike"
+config/name="godot-luau benchmark"

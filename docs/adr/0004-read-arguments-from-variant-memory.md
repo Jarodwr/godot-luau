@@ -1,6 +1,6 @@
 # 0004. Convert Variant arguments by reading their memory
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-03
 
 ## Context
@@ -31,3 +31,19 @@ Variant's bytes:
 - Couples the binding to Godot's Variant layout. The startup check turns a
   layout change into a slower path rather than a crash.
 - Measure `echo_int`, `echo_float`, `echo_vector2` and `process_nodes`.
+
+## Result
+
+ns per op, measured with `tools/bench.sh` (9 repeats, macOS arm64). Each
+row compares the build before and after this change.
+
+Implemented for nil, bool, int, float, Vector2 and Vector3, both directions
+(`push_plain_variant`, `write_plain_variant`), checked by
+`check_variant_layout` at startup.
+
+| Case | Before | After | GDScript |
+|---|---:|---:|---:|
+| `call_add2` | 59.0 | 52.8 | 60.9 |
+| `echo_float` | 51.6 | 48.3 | 53.7 |
+| `echo_int` | 51.5 | 49.0 | 51.8 |
+| `api_object_prop_set` | 43.4 | 41.5 | 26.1 |

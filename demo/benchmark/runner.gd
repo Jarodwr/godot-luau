@@ -73,12 +73,14 @@ const CASES := [
 	{"name": "new_instance", "kind": "boundary", "n": 20000, "group": "boundary", "desc": "script.new() + free() of a Node2D script"},
 
 	# Per frame
-	{"name": "process_nodes", "kind": "frame", "n": 2000, "group": "frame", "desc": "n nodes moving in _process; ns per node per frame"},
+	{"name": "process_nodes", "kind": "frame", "n": 20000, "group": "frame", "desc": "n nodes moving in _process; ns per node per frame"},
 ]
 
+# process_nodes uses 20000 nodes: with 2000, frames are short enough that the
+# CPU slows down between them, and results varied by 3x between runs.
 const FRAME_COUNT := 60
 
-# Cases the Luau spike implements (cases/luau_bench.luau)
+# Cases godot-luau implements (cases/luau_bench.luau)
 const SUPPORTED := ["vm_fib", "vm_loop_arith", "vm_function_calls", "api_vector2_math", "api_vector2_field",
 	"api_object_method", "api_object_prop_get", "api_object_prop_set", "api_dynamic_field", "api_singleton_call",
 	"api_self_method", "call_noop", "call_add2", "echo_int", "echo_float", "echo_vector2", "process_nodes"]

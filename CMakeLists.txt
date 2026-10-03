@@ -31,6 +31,13 @@ file(GLOB SOURCES CONFIGURE_DEPENDS src/*.cpp)
 add_library(godot_luau SHARED ${SOURCES} "${API_DATA}")
 target_include_directories(godot_luau PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/gen")
 target_link_libraries(godot_luau PRIVATE godot::cpp Luau.VM Luau.Compiler)
+
+# Native code generation for script functions (docs/adr/0009)
+option(GODOT_LUAU_CODEGEN "Compile script functions to native code with Luau.CodeGen (off: see docs/adr/0009)" OFF)
+if(GODOT_LUAU_CODEGEN)
+    target_link_libraries(godot_luau PRIVATE Luau.CodeGen)
+    target_compile_definitions(godot_luau PRIVATE GODOT_LUAU_CODEGEN=1)
+endif()
 set_target_properties(godot_luau PROPERTIES
     OUTPUT_NAME "godot_luau"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/addons/godot_luau/bin"

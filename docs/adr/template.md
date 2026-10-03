@@ -1,6 +1,6 @@
 # NNNN. Title
 
-- **Status:** Proposed | Accepted | Deprecated | Superseded by [NNNN](NNNN-title.md)
+- **Status:** Proposed | Accepted | Rejected | Deprecated | Superseded by [NNNN](NNNN-title.md)
 - **Date:** YYYY-MM-DD
 
 ## Context

@@ -1,4 +1,4 @@
--- Luau twin of gdscript_bench.gd for the cases the spike supports. Same
+-- Luau twin of gdscript_bench.gd for the cases godot-luau supports. Same
 -- method names; bench_* methods return a checksum compared with GDScript's.
 local Bench = { extends = "Node2D" }
 

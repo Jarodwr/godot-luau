@@ -1,6 +1,6 @@
 # 0005. Remember per script what each name resolves to
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-03
 
 ## Context
@@ -31,3 +31,15 @@ property, or unknown.
 - Instances of one script attached to different engine classes keep separate
   routes.
 - Measure `api_object_prop_get`, `api_object_prop_set` and `process_nodes`.
+
+## Result
+
+ns per op, measured with `tools/bench.sh` (9 repeats, macOS arm64). Each
+row compares the build before and after this change.
+
+Implemented as `LuauScript::Routes`, one per owner class, indexed by atom.
+
+| Case | Before | After | GDScript |
+|---|---:|---:|---:|
+| `api_object_prop_get` | 39.1 | 34.7 | 20.5 |
+| `process_nodes` | 160.4 (1.14×) | 143.9 (1.11×) | 129.7–140.6 |

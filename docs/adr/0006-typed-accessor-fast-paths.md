@@ -1,6 +1,6 @@
 # 0006. Direct paths for common getter and setter types
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-03
 
 ## Context
@@ -27,3 +27,20 @@ value directly. Other shapes keep the generic path.
 - A few more code paths to keep correct; the parity checks in the benchmark
   cover them.
 - Measure `api_object_prop_get`, `api_object_prop_set` and `process_nodes`.
+
+## Result
+
+ns per op, measured with `tools/bench.sh` (9 repeats, macOS arm64). Each
+row compares the build before and after this change.
+
+Implemented as `fast_get`/`fast_set`. They switch on the generated
+return/argument type at call time rather than on a precomputed shape; the
+switch is cheap enough that precomputing gained nothing.
+
+| Case | Before | After | GDScript |
+|---|---:|---:|---:|
+| `api_object_prop_get` | 34.7 | 33.1 | 20.4 |
+| `api_object_prop_set` | 41.8 | 39.2 | 27.2 |
+
+Smaller than hoped: most of what remains is Luau's lookup chain (see
+[0010](0010-self-stays-a-table.md)).
