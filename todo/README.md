@@ -24,11 +24,6 @@ cases that need a missing feature, so it doubles as a parity check.
 
 ## API surface
 
-- [Builtin type constructors](builtin-constructors.md)
-- [Methods on builtin values](builtin-methods.md)
-- [Global utility functions](utility-functions.md)
-- [Class constants, enums and global enums](constants-and-enums.md)
-- [Array / Dictionary iteration and Lua table conversion](arrays-and-tables.md)
 - [Integers and integer vectors](integer-types.md)
 - [Vector2 vs Vector3 in untyped contexts](vector2-vector3-ambiguity.md)
 
