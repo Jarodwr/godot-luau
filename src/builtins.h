@@ -19,6 +19,11 @@ bool push_builtin_global(lua_State *L, const char *name);
 // False (nothing pushed) if this call needs variant_call instead.
 bool call_builtin_method(lua_State *L, const Variant *self, int atom, int first, int argc);
 
+// Evaluates a binary operator on the Lua values at 1 and 2 through the
+// engine's validated evaluator for their exact types; pushes the result.
+// False (nothing pushed) if this needs the generic path.
+bool call_validated_operator(lua_State *L, int op);
+
 // Pushes the table for an engine class: `new` and its constants
 void push_class_table(lua_State *L, ClassInfo *cls);
 

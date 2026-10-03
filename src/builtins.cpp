@@ -436,6 +436,181 @@ bool call_builtin_method(lua_State *L, const Variant *self, int atom, int first,
 	return true;
 }
 
+// ---------------------------------------------------------------- validated operators (ADR 0028)
+//
+// Binary operators involving Godot values go through the engine's validated
+// evaluator for the exact operand types, cached per (operator, left, right),
+// with operands as native values or pointers into their Variants and the
+// result written in place. A vector with z = 0 is a Vector2 unless only
+// Vector3 has the operator with the other operand (no retry needed).
+
+namespace {
+
+struct OperatorInfo {
+	int32_t left;
+	int32_t op;
+	int32_t right;
+	int32_t ret;
+};
+
+const OperatorInfo OPERATORS[] = {
+#include "operator_data.inc"
+};
+
+struct OperatorEntry {
+	GDExtensionPtrOperatorEvaluator function = nullptr;
+	int32_t ret = 0;
+	bool resolved = false;
+};
+
+constexpr int CACHED_OPS = 10;  // Variant::OP_EQUAL (0) .. OP_DIVIDE (9)
+OperatorEntry operator_cache[CACHED_OPS][Variant::VARIANT_MAX][Variant::VARIANT_MAX];
+
+const OperatorEntry &operator_entry(int op, int32_t left, int32_t right) {
+	OperatorEntry &entry = operator_cache[op][left][right];
+	if (!entry.resolved) {
+		entry.resolved = true;
+		const OperatorInfo *info = find_sorted(OPERATORS, [&](const OperatorInfo &o) {
+			if (o.left != left) return o.left < left ? -1 : 1;
+			if (o.op != op) return o.op < op ? -1 : 1;
+			if (o.right != right) return o.right < right ? -1 : 1;
+			return 0;
+		});
+		if (info) {
+			entry.function = gdextension_interface::variant_get_ptr_operator_evaluator(
+					(GDExtensionVariantOperator)op, (GDExtensionVariantType)left, (GDExtensionVariantType)right);
+			entry.ret = info->ret;
+		}
+	}
+	return entry;
+}
+
+struct Operand {
+	int32_t type = -1;  // -1: not handled here
+	const void *pointer = nullptr;
+	bool flat_vector = false;
+	alignas(16) unsigned char storage[16];
+};
+
+void classify(lua_State *L, int index, Operand &operand) {
+	switch (lua_type(L, index)) {
+		case LUA_TNUMBER: {
+			double d = lua_tonumber(L, index);
+			if (d == (double)(int64_t)d && d > -9007199254740992.0 && d < 9007199254740992.0) {
+				operand.type = Variant::INT;
+				*reinterpret_cast<int64_t *>(operand.storage) = (int64_t)d;
+			} else {
+				operand.type = Variant::FLOAT;
+				*reinterpret_cast<double *>(operand.storage) = d;
+			}
+			operand.pointer = operand.storage;
+			return;
+		}
+		case LUA_TBOOLEAN:
+			operand.type = Variant::BOOL;
+			*reinterpret_cast<GDExtensionBool *>(operand.storage) = lua_toboolean(L, index);
+			operand.pointer = operand.storage;
+			return;
+		case LUA_TVECTOR: {
+			const float *v = lua_tovector(L, index);
+			memcpy(operand.storage, v, sizeof(float) * 3);
+			operand.flat_vector = v[2] == 0.0f;
+			operand.type = operand.flat_vector ? Variant::VECTOR2 : Variant::VECTOR3;
+			operand.pointer = operand.storage;
+			return;
+		}
+		case LUA_TUSERDATA: {
+			const Variant *held = (const Variant *)lua_touserdatatagged(L, index, TAG_VARIANT);
+			if (held && base_kind(type_of(*held)) != BaseKind::NONE) {
+				operand.type = type_of(*held);
+				operand.pointer = typed_pointer(held);
+			}
+			return;
+		}
+		default:
+			return;
+	}
+}
+
+} // namespace
+
+bool call_validated_operator(lua_State *L, int op) {
+	if (!builtin_layout_ok || op < 0 || op >= CACHED_OPS) {
+		return false;
+	}
+	Operand a, b;
+	classify(L, 1, a);
+	classify(L, 2, b);
+	if (a.type < 0 || b.type < 0) {
+		return false;
+	}
+	const OperatorEntry *entry = &operator_entry(op, a.type, b.type);
+	// Vectors with z = 0: Vector2 first, else Vector3 (decided, not retried)
+	if (entry->function == nullptr && (a.flat_vector || b.flat_vector)) {
+		int32_t ta = a.flat_vector ? (int32_t)Variant::VECTOR3 : a.type;
+		int32_t tb = b.flat_vector ? (int32_t)Variant::VECTOR3 : b.type;
+		entry = &operator_entry(op, ta, tb);
+	}
+	if (entry->function == nullptr) {
+		return false;
+	}
+	int32_t ret = entry->ret;
+	switch (ret) {
+		case Variant::BOOL: {
+			GDExtensionBool r = false;
+			entry->function(a.pointer, b.pointer, &r);
+			lua_pushboolean(L, r);
+			return true;
+		}
+		case Variant::INT: {
+			int64_t r = 0;
+			entry->function(a.pointer, b.pointer, &r);
+			lua_pushnumber(L, (double)r);
+			return true;
+		}
+		case Variant::FLOAT: {
+			double r = 0;
+			entry->function(a.pointer, b.pointer, &r);
+			lua_pushnumber(L, r);
+			return true;
+		}
+		case Variant::VECTOR2: {
+			float r[2] = {};
+			entry->function(a.pointer, b.pointer, r);
+			lua_pushvector(L, r[0], r[1], 0.0f);
+			return true;
+		}
+		case Variant::VECTOR3: {
+			float r[3] = {};
+			entry->function(a.pointer, b.pointer, r);
+			lua_pushvector(L, r[0], r[1], r[2]);
+			return true;
+		}
+		default:
+			break;
+	}
+	if (is_plain_inline(ret)) {
+		unsigned char *box = (unsigned char *)lua_newuserdatataggedwithmetatable(L, sizeof(Variant), TAG_VARIANT);
+		memset(box, 0, sizeof(Variant));
+		*reinterpret_cast<int32_t *>(box) = ret;
+		entry->function(a.pointer, b.pointer, box + VARIANT_DATA);
+		return true;
+	}
+	const TypeOps &ops = ops_for(ret);
+	if (ops.construct == nullptr || ops.to_variant == nullptr) {
+		return false;
+	}
+	alignas(16) unsigned char value[64];
+	ops.construct(value, nullptr);
+	entry->function(a.pointer, b.pointer, value);
+	Variant *box = (Variant *)lua_newuserdatataggedwithmetatable(L, sizeof(Variant), TAG_VARIANT);
+	ops.to_variant(box->_native_ptr(), value);
+	if (ops.destroy) {
+		ops.destroy(value);
+	}
+	return true;
+}
+
 static void check_builtin_layout() {
 	// An inline reference type: an Array's data is its Array (copies share
 	// the same internal pointer). A heap type: the data points at the value.

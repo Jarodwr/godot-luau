@@ -1073,6 +1073,9 @@ static int variant_namecall(lua_State *L) {
 // new userdata (docs/adr/0024)
 template <Variant::Operator OP>
 static int variant_operator(lua_State *L) {
+	if (call_validated_operator(L, OP)) {  // docs/adr/0028
+		return 1;
+	}
 	GDExtensionBool valid = false;
 	{
 		VariantResult result;

@@ -28,6 +28,7 @@ add_custom_command(
         "${CMAKE_CURRENT_BINARY_DIR}/gen/global_enum_data.inc"
         "${CMAKE_CURRENT_BINARY_DIR}/gen/builtin_data.inc"
         "${CMAKE_CURRENT_BINARY_DIR}/gen/builtin_method_data.inc"
+        "${CMAKE_CURRENT_BINARY_DIR}/gen/operator_data.inc"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_api_data.py" "${API_JSON}" "${API_DATA}"
     DEPENDS "${API_JSON}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_api_data.py"
 )
