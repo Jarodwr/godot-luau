@@ -359,26 +359,84 @@ static void push_call_error(lua_State *L, const Method &method, const GDExtensio
 
 // Through Variants, for anything ptrcall doesn't handle (varargs, defaults,
 // object returns, unusual types)
+// ---- Variant-route calls (docs/adr/0015)
+//
+// godot-cpp's Variant constructor and destructor are engine calls, so
+// arguments live in raw storage: only the ones passed are constructed, plain
+// values are written as bytes (nothing to destroy), and results are written
+// by the engine into uninitialized storage.
+static bool write_plain_variant(lua_State *L, int index, void *memory);
+static bool needs_destroy(const void *variant_bytes);
+
+constexpr int MAX_VARIANT_ARGS = 16;
+
+struct VariantArgs {
+	alignas(Variant) unsigned char storage[MAX_VARIANT_ARGS][sizeof(Variant)];
+	const Variant *argv[MAX_VARIANT_ARGS];
+	int count = 0;
+
+	VariantArgs() = default;
+	VariantArgs(const VariantArgs &) = delete;
+	~VariantArgs() {
+		for (int i = 0; i < count; i++) {
+			if (needs_destroy(storage[i])) {
+				reinterpret_cast<Variant *>(storage[i])->~Variant();
+			}
+		}
+	}
+
+	// Appends the Luau value at `index`
+	void add(lua_State *L, int index) {
+		void *slot = storage[count];
+		if (!write_plain_variant(L, index, slot)) {
+			new (slot) Variant(to_variant(L, index));
+		}
+		argv[count] = reinterpret_cast<const Variant *>(slot);
+		count++;
+	}
+
+	const GDExtensionConstVariantPtr *pointers() const { return (const GDExtensionConstVariantPtr *)argv; }
+};
+
+// A result the engine constructs (the interface's return pointers are
+// uninitialized)
+struct VariantResult {
+	alignas(Variant) unsigned char storage[sizeof(Variant)];
+	bool constructed = false;
+
+	VariantResult() = default;
+	VariantResult(const VariantResult &) = delete;
+	~VariantResult() {
+		if (constructed && needs_destroy(storage)) {
+			get().~Variant();
+		}
+	}
+	GDExtensionUninitializedVariantPtr uninitialized() {
+		constructed = true;
+		return storage;
+	}
+	Variant &get() { return *reinterpret_cast<Variant *>(storage); }
+};
+
 static bool call_variant(lua_State *L, GDExtensionObjectPtr object, GDExtensionMethodBindPtr bind, const Method &method, int first, int argc) {
-	constexpr int MAX = 16;
-	if (argc > MAX) {
+	if (argc > MAX_VARIANT_ARGS) {
 		lua_pushstring(L, "too many arguments");
 		return false;
 	}
-	Variant args[MAX];
-	const Variant *argv[MAX];
-	for (int i = 0; i < argc; i++) {
-		args[i] = to_variant(L, first + i);
-		argv[i] = &args[i];
-	}
-	Variant result;
+	VariantResult result;
 	GDExtensionCallError error;
-	gdextension_interface::object_method_bind_call(bind, object, (const GDExtensionConstVariantPtr *)argv, argc, result._native_ptr(), &error);
+	{
+		VariantArgs args;
+		for (int i = 0; i < argc; i++) {
+			args.add(L, first + i);
+		}
+		gdextension_interface::object_method_bind_call(bind, object, args.pointers(), argc, result.uninitialized(), &error);
+	}
 	if (error.error != GDEXTENSION_CALL_OK) {
 		push_call_error(L, method, error);
 		return false;
 	}
-	push_variant(L, result);
+	push_variant(L, result.get());
 	return true;
 }
 
@@ -507,29 +565,29 @@ static void generic_set(lua_State *L, GDExtensionObjectPtr object, const StringN
 
 // Object.call(name, args...): script methods and anything not in the table
 static bool generic_call(lua_State *L, GDExtensionObjectPtr object, const StringName &name, int first, int argc) {
-	constexpr int MAX = 16;
-	if (argc + 1 > MAX) {
+	if (argc + 1 > MAX_VARIANT_ARGS) {
 		lua_pushstring(L, "too many arguments");
 		return false;
 	}
-	Variant args[MAX];
-	const Variant *argv[MAX];
-	args[0] = name;
-	argv[0] = &args[0];
-	for (int i = 0; i < argc; i++) {
-		args[i + 1] = to_variant(L, first + i);
-		argv[i + 1] = &args[i + 1];
-	}
 	const Method &call = object_method("call");
-	Variant result;
+	VariantResult result;
 	GDExtensionCallError error;
-	gdextension_interface::object_method_bind_call(call.bind, object, (const GDExtensionConstVariantPtr *)argv, argc + 1, result._native_ptr(), &error);
+	{
+		VariantArgs args;
+		new (args.storage[0]) Variant(name);
+		args.argv[0] = reinterpret_cast<const Variant *>(args.storage[0]);
+		args.count = 1;
+		for (int i = 0; i < argc; i++) {
+			args.add(L, first + i);
+		}
+		gdextension_interface::object_method_bind_call(call.bind, object, args.pointers(), argc + 1, result.uninitialized(), &error);
+	}
 	if (error.error != GDEXTENSION_CALL_OK) {
 		CharString n = String(name).utf8();
 		lua_pushfstring(L, "error %d calling '%s'", (int)error.error, n.get_data());
 		return false;
 	}
-	push_variant(L, result);
+	push_variant(L, result.get());
 	return true;
 }
 
@@ -636,6 +694,8 @@ bool set_property(lua_State *L, GDExtensionObjectPtr object, const Member &membe
 
 // ---------------------------------------------------------------- objects
 
+static int objects_ref = LUA_NOREF;  // weak table: object pointer → box
+
 struct ObjectBox {
 	Variant ref;  // keeps RefCounted objects alive
 	GDExtensionObjectPtr object;
@@ -662,13 +722,28 @@ static GDExtensionObjectPtr checked_object(lua_State *L, int index) {
 	return box ? box->object : nullptr;
 }
 
-void push_object(lua_State *L, GDExtensionObjectPtr object, bool never_freed) {
+void push_object(lua_State *L, GDExtensionObjectPtr object, bool never_freed, bool fresh) {
 	if (object == nullptr) {
 		lua_pushnil(L);
 		return;
 	}
 	if (push_self_table(L, object)) {
 		return;
+	}
+	// One box per live non-RefCounted object, in a weak-valued table keyed by
+	// the object pointer (docs/adr/0016). The instance ID check catches an address reused
+	// by a new object after the old one was freed.
+	lua_getref(L, objects_ref);
+	if (!fresh) {
+		lua_pushlightuserdata(L, object);
+		if (lua_rawget(L, -2) == LUA_TUSERDATA) {
+			ObjectBox *cached = (ObjectBox *)lua_touserdatatagged(L, -1, TAG_OBJECT);
+			if (cached && cached->id == gdextension_interface::object_get_instance_id(object)) {
+				lua_remove(L, -2);
+				return;
+			}
+		}
+		lua_pop(L, 1);  // stale or missing; the objects table stays below
 	}
 	ObjectBox *box = (ObjectBox *)lua_newuserdatataggedwithmetatable(L, sizeof(ObjectBox), TAG_OBJECT);
 	new (box) ObjectBox();
@@ -678,6 +753,15 @@ void push_object(lua_State *L, GDExtensionObjectPtr object, bool never_freed) {
 	box->id = gdextension_interface::object_get_instance_id(object);
 	box->cls = class_info_of(object);
 	box->can_be_freed = !never_freed && !box->cls->is_ref_counted;
+	// RefCounted objects aren't cached: temporary ones (RefCounted.new() in a
+	// loop) filled the table with dead entries between collections and made
+	// creating them ~70 ns slower
+	if (!box->cls->is_ref_counted) {
+		lua_pushlightuserdata(L, object);
+		lua_pushvalue(L, -2);
+		lua_rawset(L, -4);
+	}
+	lua_remove(L, -2);  // the objects table
 }
 
 GDExtensionObjectPtr to_object(lua_State *L, int index) {
@@ -793,23 +877,35 @@ static int variant_namecall(lua_State *L) {
 	Variant *self = (Variant *)lua_touserdatatagged(L, 1, TAG_VARIANT);
 	int atom = -1;
 	const char *name = lua_namecallatom(L, &atom);
-	StringName method = atom >= 0 ? atom_name(atom) : StringName(name);
+	StringName uncached;
+	const StringName &method = atom >= 0 ? atom_name(atom) : (uncached = StringName(name));
 	int argc = lua_gettop(L) - 1;
-	constexpr int MAX = 16;
-	Variant args[MAX];
-	const Variant *argv[MAX];
-	for (int i = 0; i < argc && i < MAX; i++) {
-		args[i] = to_variant(L, 2 + i);
-		argv[i] = &args[i];
+	if (argc > MAX_VARIANT_ARGS) {
+		luaL_error(L, "too many arguments");
 	}
-	Variant result;
-	GDExtensionCallError error;
-	self->callp(method, argv, argc, result, error);
-	if (error.error != GDEXTENSION_CALL_OK) {
-		CharString n = String(method).utf8();
-		luaL_error(L, "error %d calling '%s'", (int)error.error, n.get_data());
+	bool ok;
+	{
+		VariantResult result;
+		GDExtensionCallError error;
+		{
+			VariantArgs args;
+			for (int i = 0; i < argc; i++) {
+				args.add(L, 2 + i);
+			}
+			gdextension_interface::variant_call(self->_native_ptr(), method._native_ptr(), args.pointers(), argc, result.uninitialized(), &error);
+		}
+		ok = error.error == GDEXTENSION_CALL_OK;
+		if (ok) {
+			push_variant(L, result.get());
+		} else {
+			CharString n = String(method).utf8();
+			lua_pushfstring(L, "error %d calling '%s'", (int)error.error, n.get_data());
+		}
 	}
-	push_variant(L, result);
+	// Raised after the Godot values above are destroyed
+	if (!ok) {
+		lua_error(L);
+	}
 	return 1;
 }
 
@@ -855,6 +951,23 @@ static void check_variant_layout() {
 			&& reinterpret_cast<const float *>(data(v3))[2] == 3.0f;
 	if (!variant_bytes_ok) {
 		UtilityFunctions::push_warning("godot-luau: unexpected Variant layout; using slower conversions");
+	}
+}
+
+// Whether a Variant (given its bytes) needs its destructor: false for plain
+// types when the layout check passed
+static bool needs_destroy(const void *variant_bytes) {
+	if (!variant_bytes_ok) {
+		return true;
+	}
+	switch (*reinterpret_cast<const int32_t *>(variant_bytes)) {
+		case Variant::NIL: case Variant::BOOL: case Variant::INT: case Variant::FLOAT:
+		case Variant::VECTOR2: case Variant::VECTOR2I: case Variant::RECT2: case Variant::RECT2I:
+		case Variant::VECTOR3: case Variant::VECTOR3I: case Variant::VECTOR4: case Variant::VECTOR4I:
+		case Variant::PLANE: case Variant::QUATERNION: case Variant::COLOR: case Variant::RID:
+			return false;
+		default:
+			return true;
 	}
 }
 
@@ -1066,7 +1179,7 @@ static int string_length(lua_State *L) {
 static int class_new(lua_State *L) {
 	ClassInfo *cls = (ClassInfo *)lua_tolightuserdata(L, lua_upvalueindex(1));
 	GDExtensionObjectPtr object = gdextension_interface::classdb_construct_object2(cls->name._native_ptr());
-	push_object(L, object);
+	push_object(L, object, false, true);
 	return 1;
 }
 
@@ -1107,6 +1220,14 @@ void register_globals(lua_State *L) {
 	lua_pushcfunction(L, object_tostring, "__tostring");
 	lua_setfield(L, -2, "__tostring");
 	lua_setuserdatametatable(L, TAG_OBJECT);
+
+	lua_newtable(L);  // objects table, weak values
+	lua_newtable(L);
+	lua_pushstring(L, "v");
+	lua_setfield(L, -2, "__mode");
+	lua_setmetatable(L, -2);
+	objects_ref = lua_ref(L, -1);
+	lua_pop(L, 1);
 	lua_setuserdatadtor(L, TAG_OBJECT, [](lua_State *, void *p) { ((ObjectBox *)p)->~ObjectBox(); });
 
 	// Other Variants (Rect2, Color, Array…)
