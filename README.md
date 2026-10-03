@@ -86,7 +86,11 @@ Mover
 - `LuauScript`, `LuauLanguage`, the `.luau`/`.fnl` loader, and
   `script.new()`.
 
-## Known gaps (it's a spike)
+## Decisions
+
+Design decisions and proposed changes are recorded in [`docs/adr/`](docs/adr/README.md).
+
+## Known gaps
 
 - **Vector2 and Vector3 share Luau's `vector`.** A vector passed where Godot
   expects a Variant becomes Vector2 if z is 0, else Vector3. Typed engine
