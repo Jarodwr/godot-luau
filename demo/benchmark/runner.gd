@@ -7,6 +7,9 @@ extends SceneTree
 #     --scale=X        multiply every case's iteration count (default 1.0)
 #     --repeats=N      timed repeats per case after one warm-up (default 5)
 #     --only=TEXT      run only cases whose name contains TEXT
+#     --bench=PATH     script under test (default res://cases/luau_bench.luau)
+#     --peer=PATH      its same-language peer script (default res://cases/peer.luau)
+#     --mover=PATH     _process script for process_nodes (default res://cases/mover.luau)
 #     --fennel-only    skip the GDScript side (for profiling the Fennel side;
 #                      GDScript columns are 0 and checks "-")
 #
@@ -104,6 +107,9 @@ var repeats := 5
 var only := ""
 var fennel_only := false
 var mover_path := "res://cases/mover.luau"
+# The script under test and its same-language peer (see compare-gls/)
+var bench_path := "res://cases/luau_bench.luau"
+var peer_path := "res://cases/peer.luau"
 var out_path := ""
 
 var gd_obj: Node
@@ -118,6 +124,10 @@ func _initialize() -> void:
 			repeats = int(arg.get_slice("=", 1))
 		elif arg.begins_with("--only="):
 			only = arg.get_slice("=", 1)
+		elif arg.begins_with("--bench="):
+			bench_path = arg.get_slice("=", 1)
+		elif arg.begins_with("--peer="):
+			peer_path = arg.get_slice("=", 1)
 		elif arg.begins_with("--mover="):
 			mover_path = arg.get_slice("=", 1)
 		elif arg == "--fennel-only":
@@ -129,9 +139,19 @@ func _initialize() -> void:
 	run()
 
 
+# script.new() where the language provides it (GDScript, godot-luau),
+# otherwise the base class with the script attached (godot-luau-script)
+func new_from_script(script: Script) -> Object:
+	if script.has_method("new"):
+		return script.new()
+	var object: Object = ClassDB.instantiate(script.get_instance_base_type())
+	object.set_script(script)
+	return object
+
+
 func run() -> void:
 	gd_obj = load("res://cases/gdscript_bench.gd").new()
-	fnl_obj = load("res://cases/luau_bench.luau").new()
+	fnl_obj = new_from_script(load(bench_path))
 	# Names of equal length: api_object_method sums get_name().length()
 	gd_obj.name = "BenchGD"
 	fnl_obj.name = "BenchFN"
@@ -139,7 +159,7 @@ func run() -> void:
 	root.add_child(fnl_obj)
 	# Fixtures for the edge cases: a child Node2D, a same-language peer and a
 	# GDScript object under each bench node
-	for pair in [[gd_obj, "res://cases/peer.gd"], [fnl_obj, "res://cases/peer.luau"]]:
+	for pair in [[gd_obj, "res://cases/peer.gd"], [fnl_obj, peer_path]]:
 		var child := Node2D.new()
 		child.name = "Child"
 		child.position = Vector2(3, 4)
@@ -413,7 +433,7 @@ func b_signal_into_script(o: Object, n: int) -> Variant:
 func b_new_instance(o: Object, n: int) -> Variant:
 	var script: Script = o.get_script()
 	for i in n:
-		var node: Node = script.new()
+		var node: Node = new_from_script(script)
 		node.free()
 	return n
 

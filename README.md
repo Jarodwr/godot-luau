@@ -60,7 +60,10 @@ All checksums match GDScript.
 | `_process` per node, 20,000 movers | 139 | 139 |
 
 The full run (58 cases, including ones that need missing features) is in
-`demo/benchmark/results/luau.json`.
+`demo/benchmark/results/luau.json`. A comparison with
+[godot-luau-script](https://git.seki.pw/Fumohouse/godot-luau-script) on the
+same benchmark is in
+[`docs/comparisons/godot-luau-script.md`](docs/comparisons/godot-luau-script.md).
 
 Remaining gaps:
 - **Engine property access:** `self.position` misses two Luau tables before

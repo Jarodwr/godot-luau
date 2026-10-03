@@ -1,0 +1,1 @@
+../../benchmark/cases/gdscript_bench.gd
