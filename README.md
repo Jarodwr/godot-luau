@@ -127,6 +127,8 @@ Design decisions and proposed changes are recorded in [`docs/adr/`](docs/adr/REA
 
 ## Known gaps
 
+Missing features are tracked one per file in [`todo/`](todo/README.md).
+
 - **Vector2 and Vector3 share Luau's `vector`.** A vector passed where Godot
   expects a Variant becomes Vector2 if z is 0, else Vector3. Typed engine
   arguments are unaffected.

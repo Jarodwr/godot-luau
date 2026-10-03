@@ -38,3 +38,11 @@ at the same optimisation level.
 | [0012](0012-simple-call-fast-path.md) | Direct path for simple engine method calls | Accepted |
 | [0013](0013-skip-freed-checks-that-cannot-fail.md) | Skip freed-object checks for objects that can't be freed | Accepted |
 | [0014](0014-no-fennel-specific-optimisations.md) | No Fennel-specific optimisations | Accepted |
+| [0015](0015-variant-calls-construct-only-what-they-use.md) | Variant-route calls construct only what they use | Proposed |
+| [0016](0016-one-box-per-object.md) | One Lua value per engine object | Proposed |
+| [0017](0017-native-object-results-and-paths.md) | Native calls for object results and NodePath arguments | Proposed |
+| [0018](0018-string-conversion-cache.md) | Cache string conversions in both directions | Proposed |
+| [0019](0019-stringname-arguments-by-reference.md) | Pass StringName arguments by reference to the atom's name | Proposed |
+| [0020](0020-indexed-access-on-arrays-and-dictionaries.md) | Direct indexed access on Array and Dictionary | Proposed |
+| [0021](0021-calls-into-other-scripts-via-variant-call.md) | Call other languages' script methods directly | Proposed |
+| [0022](0022-script-instantiation-cost.md) | Investigate script instantiation cost | Proposed |
