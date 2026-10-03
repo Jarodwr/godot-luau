@@ -5,6 +5,17 @@ extends Node2D
 # that runner.gd compares between the two.
 
 signal ticked(value: int)
+signal idle
+
+const MAX_HEALTH := 100
+
+var notified := 0
+var _armor := 0
+var armor: int:
+	set(value):
+		_armor = value * 2  # visible effect: a bypassed setter fails the check
+	get:
+		return _armor
 
 @export var speed: float = 2.0
 
@@ -368,4 +379,174 @@ func bench_api_array_table_in(n: int) -> int:
 	var s := 0
 	for i in range(1, n + 1):
 		s += [1, 2, 3].size()
+	return s
+
+
+# --- API surface and script features ----------------------------------------
+
+func greet(who: String = "world") -> int:
+	return who.length()
+
+
+func typed_add(a: int, b: float) -> float:
+	return a + b
+
+
+func on_idle() -> void:
+	pass
+
+
+func _notification(what: int) -> void:
+	if what == 12345:
+		notified += 1
+
+
+func bench_api_vector2_methods(n: int) -> float:
+	var v := Vector2(3, 4)
+	var w := Vector2(1, 2)
+	var s := 0.0
+	for i in range(1, n + 1):
+		s += v.normalized().dot(w) + v.distance_to(w)
+	return snappedf(s, 0.001)
+
+
+func bench_api_vector3_math(n: int) -> float:
+	var v := Vector3(0, 0, 0)
+	var step := Vector3(1, 2, 3)
+	for i in range(1, n + 1):
+		v = v + step * 0.5
+	return v.x
+
+
+func bench_api_vector2i_math(n: int) -> int:
+	var a := Vector2i(0, 0)
+	for i in range(1, n + 1):
+		a = a + Vector2i(1, 2)
+	return a.y
+
+
+func bench_api_rect_has_point(n: int) -> int:
+	var r := Rect2(0, 0, 10, 10)
+	var p := Vector2(5, 5)
+	var s := 0
+	for i in range(1, n + 1):
+		if r.has_point(p):
+			s += 1
+	return s
+
+
+func bench_api_builtin_static(n: int) -> float:
+	var s := 0.0
+	for i in range(1, n + 1):
+		s += Vector2.from_angle(0.5).x
+	return snappedf(s, 0.001)
+
+
+func bench_api_utility_mix(n: int) -> float:
+	var s := 0.0
+	for i in range(1, n + 1):
+		s += clampf(float(i % 20), 0.0, 10.0) + deg_to_rad(90.0)
+	return snappedf(s, 0.001)
+
+
+func bench_api_global_enum(n: int) -> int:
+	var s := 0
+	for i in range(1, n + 1):
+		s += KEY_SPACE
+	return s
+
+
+func bench_api_dict_iterate(n: int) -> int:
+	var d := {}
+	for i in range(1, 101):
+		d[i] = i
+	var s := 0
+	for r in range(n / 100):
+		for k in d:
+			s += d[k]
+	return s
+
+
+func bench_api_packed_float_array(n: int) -> int:
+	var a := PackedFloat32Array()
+	for i in range(1, n + 1):
+		a.append(i * 0.5)
+	return a.size()
+
+
+func bench_api_string_godot_method(n: int) -> int:
+	var s := 0
+	for i in range(1, n + 1):
+		if "hello world".begins_with("hello"):
+			s += 1
+	return s
+
+
+func bench_api_transform3d_xform(n: int) -> float:
+	var t := Transform3D(Basis(Vector3(0, 1, 0), 0.5), Vector3(1, 2, 3))
+	var s := 0.0
+	for i in range(1, n + 1):
+		s += (t * Vector3(1, 0, 0)).x
+	return snappedf(s, 0.001)
+
+
+func bench_api_export_set(n: int) -> float:
+	var last := 0.0
+	for i in range(1, n + 1):
+		speed = i * 0.5
+		last = speed
+	speed = 2.0
+	return last
+
+
+func bench_api_property_accessor(n: int) -> int:
+	var s := 0
+	for i in range(1, n + 1):
+		armor = i
+		s += armor
+	return s
+
+
+func bench_api_signal_emit_unconnected(n: int) -> int:
+	for i in range(1, n + 1):
+		idle.emit()
+	return n
+
+
+func bench_api_signal_connect(n: int) -> int:
+	var cb := Callable(self, "on_idle")
+	for i in range(1, n + 1):
+		idle.connect(cb)
+		idle.disconnect(cb)
+	return n
+
+
+func bench_api_inherited_call(n: int) -> int:
+	var d = get_node("Derived")
+	var s := 0
+	for i in range(1, n + 1):
+		s += d.base_helper(i)
+	return s
+
+
+func bench_api_super_call(n: int) -> int:
+	var d = get_node("Derived")
+	var s := 0
+	for i in range(1, n + 1):
+		s += d.overridden(i)
+	return s
+
+
+func bench_api_get_override(n: int) -> int:
+	var dyn = get_node("Dynamic")
+	var s := 0
+	for i in range(1, n + 1):
+		s += dyn.virtual_value
+	return s
+
+
+func bench_api_script_constant(n: int) -> int:
+	var s := 0
+	for i in range(1, n + 1):
+		s += MAX_HEALTH
 	return s

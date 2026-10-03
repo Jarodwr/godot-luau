@@ -15,8 +15,24 @@ export type Bench = Node2D & typeof(Bench) & {
 	--- @signal
 	ticked: SignalWithArgs<(value: number) -> ()>,
 
+	--- @signal
+	idle: SignalWithArgs<() -> ()>,
+
+	--- @property
+	--- @set set_armor
+	--- @get get_armor
+	armor: number,
+
+	--- @property
+	--- @default 0
+	notified: integer,
+
 	counter: number,
+	_armor: number,
 }
+
+--- @registerConstant
+Bench.MAX_HEALTH = 100
 
 local function fib(n)
 	if n < 2 then return n end
@@ -330,5 +346,196 @@ function Bench:bench_api_transform_xform(n)
 	return math.round(s * 1000) / 1000
 end
 
+
+-- API surface and script features
+--- @registerMethod
+--- @defaultArgs ["world"]
+function Bench:greet(who: string): number
+	return utf8.len(who)
+end
+
+--- @registerMethod
+function Bench:typed_add(a: integer, b: number): number
+	return a + b
+end
+
+--- @registerMethod
+function Bench:on_idle()
+end
+
+--- @registerMethod
+function Bench:set_armor(value: number)
+	self._armor = value * 2
+end
+
+--- @registerMethod
+function Bench:get_armor(): number
+	return self._armor or 0
+end
+
+--- @registerMethod
+function Bench:_Notification(what: integer)
+	if what == 12345 then self.notified += 1 end
+end
+
+--- @registerMethod
+function Bench:bench_api_vector2_methods(n)
+	local v = Vector2.new(3, 4)
+	local w = Vector2.new(1, 2)
+	local s = 0.0
+	for i = 1, n do s += v:Normalized():Dot(w) + v:DistanceTo(w) end
+	return math.round(s * 1000) / 1000
+end
+
+--- @registerMethod
+function Bench:bench_api_vector3_math(n)
+	local v = Vector3.new(0, 0, 0)
+	local step = Vector3.new(1, 2, 3)
+	for i = 1, n do v = v + step * 0.5 end
+	return v.x
+end
+
+--- @registerMethod
+function Bench:bench_api_vector2i_math(n)
+	local a = Vector2i.new(0, 0)
+	for i = 1, n do a = a + Vector2i.new(1, 2) end
+	return a.y
+end
+
+--- @registerMethod
+function Bench:bench_api_rect_has_point(n)
+	local r = Rect2.new(0, 0, 10, 10)
+	local p = Vector2.new(5, 5)
+	local s = 0
+	for i = 1, n do
+		if r:HasPoint(p) then s += 1 end
+	end
+	return s
+end
+
+--- @registerMethod
+function Bench:bench_api_builtin_static(n)
+	local s = 0.0
+	for i = 1, n do s += Vector2.FromAngle(0.5).x end
+	return math.round(s * 1000) / 1000
+end
+
+--- @registerMethod
+function Bench:bench_api_utility_mix(n)
+	local s = 0.0
+	for i = 1, n do s += clampf(i % 20, 0, 10) + deg_to_rad(90) end
+	return math.round(s * 1000) / 1000
+end
+
+--- @registerMethod
+function Bench:bench_api_global_enum(n)
+	local s = 0
+	for i = 1, n do s += Enum.Key.SPACE end
+	return s
+end
+
+--- @registerMethod
+function Bench:bench_api_dict_iterate(n)
+	local d = Dictionary.new()
+	for i = 1, 100 do d:Set(i, i) end
+	local s = 0
+	for r = 1, n // 100 do
+		for _, v in d do s += v end
+	end
+	return s
+end
+
+--- @registerMethod
+function Bench:bench_api_packed_float_array(n)
+	local a = PackedFloat32Array.new()
+	for i = 1, n do a:Append(i * 0.5) end
+	return a:Size()
+end
+
+-- GLS doesn't bind Godot's String methods: Lua's string library instead
+--- @registerMethod
+function Bench:bench_api_string_godot_method(n)
+	local s = 0
+	for i = 1, n do
+		if string.sub("hello world", 1, 5) == "hello" then s += 1 end
+	end
+	return s
+end
+
+--- @registerMethod
+function Bench:bench_api_transform3d_xform(n)
+	local t = Transform3D.new(Basis.new(Vector3.new(0, 1, 0), 0.5), Vector3.new(1, 2, 3))
+	local s = 0.0
+	for i = 1, n do s += (t * Vector3.new(1, 0, 0)).x end
+	return math.round(s * 1000) / 1000
+end
+
+--- @registerMethod
+function Bench:bench_api_export_set(n)
+	local last = 0.0
+	for i = 1, n do
+		self.speed = i * 0.5
+		last = self.speed
+	end
+	self.speed = 2.0
+	return last
+end
+
+--- @registerMethod
+function Bench:bench_api_property_accessor(n)
+	local s = 0
+	for i = 1, n do
+		self.armor = i
+		s += self.armor
+	end
+	return s
+end
+
+--- @registerMethod
+function Bench:bench_api_signal_emit_unconnected(n)
+	for i = 1, n do self.idle:Emit() end
+	return n
+end
+
+--- @registerMethod
+function Bench:bench_api_signal_connect(n)
+	local cb = Callable.new(self, "on_idle")
+	for i = 1, n do
+		self.idle:Connect(cb)
+		self.idle:Disconnect(cb)
+	end
+	return n
+end
+
+--- @registerMethod
+function Bench:bench_api_inherited_call(n)
+	local d = self:GetNode("Derived")
+	local s = 0
+	for i = 1, n do s += d:base_helper(i) end
+	return s
+end
+
+--- @registerMethod
+function Bench:bench_api_super_call(n)
+	local d = self:GetNode("Derived")
+	local s = 0
+	for i = 1, n do s += d:overridden(i) end
+	return s
+end
+
+--- @registerMethod
+function Bench:bench_api_get_override(n)
+	local dyn = self:GetNode("Dynamic")
+	local s = 0
+	for i = 1, n do s += dyn:Get("virtual_value") end
+	return s
+end
+
+--- @registerMethod
+function Bench:bench_api_script_constant(n)
+	local s = 0
+	for i = 1, n do s += Bench.MAX_HEALTH end
+	return s
+end
 
 return BenchC

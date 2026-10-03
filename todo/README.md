@@ -18,6 +18,8 @@ cases that need a missing feature, so it doubles as a parity check.
 - [Tool scripts](tool-scripts.md)
 - [Object overrides (_notification, _get, _set, _get_property_list)](object-overrides.md)
 - [Static methods and script constants](static-methods-and-constants.md)
+- [Default arguments for methods called from Godot](default-arguments.md)
+- [Typed methods and properties](typed-members.md)
 - [RPC configuration](rpc.md)
 
 ## API surface

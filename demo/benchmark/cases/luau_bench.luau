@@ -1,6 +1,34 @@
 -- Luau twin of gdscript_bench.gd for the cases godot-luau supports. Same
 -- method names; bench_* methods return a checksum compared with GDScript's.
-local Bench = { extends = "Node2D" }
+local Bench = {
+	extends = "Node2D",
+
+	-- Provisional declarations for features godot-luau doesn't have yet
+	-- (todo/exports.md, signals.md, …). Their final form is decided when each
+	-- feature is built; until then godot-luau ignores them and the cases that
+	-- need them report UNSUPPORTED.
+	exports = {
+		speed = { type = "float", default = 2.0 },
+	},
+	properties = {
+		armor = { type = "int", default = 0, set = "set_armor", get = "get_armor" },
+		notified = { type = "int", default = 0 },
+	},
+	signals = {
+		ticked = { "value" },
+		idle = {},
+	},
+	defaults = {
+		greet = { "world" },
+	},
+	types = {
+		typed_add = { args = { "int", "float" }, ret = "float" },
+	},
+}
+
+-- A constant is a plain field on the class table (registering it with Godot
+-- is part of todo/static-methods-and-constants.md)
+Bench.MAX_HEALTH = 100
 
 local function fib(n)
 	if n < 2 then return n end
@@ -291,6 +319,157 @@ end
 function Bench:bench_api_array_table_in(n)
 	local s = 0
 	for i = 1, n do s += Array({ 1, 2, 3 }):size() end
+	return s
+end
+
+-- API surface and script features (todo/)
+function Bench:greet(who) return who:length() end
+function Bench:typed_add(a, b) return a + b end
+function Bench:on_idle() end
+function Bench:set_armor(value) self._armor = value * 2 end
+function Bench:get_armor() return self._armor or 0 end
+
+function Bench:_notification(what)
+	if what == 12345 then self.notified += 1 end
+end
+
+function Bench:bench_api_vector2_methods(n)
+	local v = Vector2(3, 4)
+	local w = Vector2(1, 2)
+	local s = 0.0
+	for i = 1, n do s += v:normalized():dot(w) + v:distance_to(w) end
+	return math.round(s * 1000) / 1000
+end
+
+function Bench:bench_api_vector3_math(n)
+	local v = Vector3(0, 0, 0)
+	local step = Vector3(1, 2, 3)
+	for i = 1, n do v = v + step * 0.5 end
+	return v.x
+end
+
+function Bench:bench_api_vector2i_math(n)
+	local a = Vector2i(0, 0)
+	for i = 1, n do a = a + Vector2i(1, 2) end
+	return a.y
+end
+
+function Bench:bench_api_rect_has_point(n)
+	local r = Rect2(0, 0, 10, 10)
+	local p = Vector2(5, 5)
+	local s = 0
+	for i = 1, n do
+		if r:has_point(p) then s += 1 end
+	end
+	return s
+end
+
+function Bench:bench_api_builtin_static(n)
+	local s = 0.0
+	for i = 1, n do s += Vector2.from_angle(0.5).x end
+	return math.round(s * 1000) / 1000
+end
+
+function Bench:bench_api_utility_mix(n)
+	local s = 0.0
+	for i = 1, n do s += clampf(i % 20, 0, 10) + deg_to_rad(90) end
+	return math.round(s * 1000) / 1000
+end
+
+function Bench:bench_api_global_enum(n)
+	local s = 0
+	for i = 1, n do s += KEY_SPACE end
+	return s
+end
+
+function Bench:bench_api_dict_iterate(n)
+	local d = Dictionary()
+	for i = 1, 100 do d[i] = i end
+	local s = 0
+	for r = 1, n // 100 do
+		for _, v in d do s += v end
+	end
+	return s
+end
+
+function Bench:bench_api_packed_float_array(n)
+	local a = PackedFloat32Array()
+	for i = 1, n do a:append(i * 0.5) end
+	return a:size()
+end
+
+function Bench:bench_api_string_godot_method(n)
+	local s = 0
+	for i = 1, n do
+		if ("hello world"):begins_with("hello") then s += 1 end
+	end
+	return s
+end
+
+function Bench:bench_api_transform3d_xform(n)
+	local t = Transform3D(Basis(Vector3(0, 1, 0), 0.5), Vector3(1, 2, 3))
+	local s = 0.0
+	for i = 1, n do s += (t * Vector3(1, 0, 0)).x end
+	return math.round(s * 1000) / 1000
+end
+
+function Bench:bench_api_export_set(n)
+	local last = 0.0
+	for i = 1, n do
+		self.speed = i * 0.5
+		last = self.speed
+	end
+	self.speed = 2.0
+	return last
+end
+
+function Bench:bench_api_property_accessor(n)
+	local s = 0
+	for i = 1, n do
+		self.armor = i
+		s += self.armor
+	end
+	return s
+end
+
+function Bench:bench_api_signal_emit_unconnected(n)
+	for i = 1, n do self.idle:emit() end
+	return n
+end
+
+function Bench:bench_api_signal_connect(n)
+	local cb = Callable(self, "on_idle")
+	for i = 1, n do
+		self.idle:connect(cb)
+		self.idle:disconnect(cb)
+	end
+	return n
+end
+
+function Bench:bench_api_inherited_call(n)
+	local d = self:get_node("Derived")
+	local s = 0
+	for i = 1, n do s += d:base_helper(i) end
+	return s
+end
+
+function Bench:bench_api_super_call(n)
+	local d = self:get_node("Derived")
+	local s = 0
+	for i = 1, n do s += d:overridden(i) end
+	return s
+end
+
+function Bench:bench_api_get_override(n)
+	local dyn = self:get_node("Dynamic")
+	local s = 0
+	for i = 1, n do s += dyn.virtual_value end
+	return s
+end
+
+function Bench:bench_api_script_constant(n)
+	local s = 0
+	for i = 1, n do s += Bench.MAX_HEALTH end
 	return s
 end
 

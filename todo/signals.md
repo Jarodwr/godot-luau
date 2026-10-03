@@ -15,3 +15,11 @@ Needs a declaration format, `_has_script_signal`/`_get_script_signal_list`, a `S
 Benchmark cases `api_signal_emit` and `signal_into_script` run. A Luau script can connect a button's `pressed` to a Luau function.
 
 Check the benchmark afterwards (`tools/bench.sh`): a feature shouldn't slow existing cases.
+
+## Benchmark cases
+
+- `api_signal_emit_unconnected`
+- `api_signal_connect`
+
+GDScript and godot-luau-script numbers for these are in
+[`docs/comparisons/godot-luau-script.md`](../docs/comparisons/godot-luau-script.md#feature-cases).

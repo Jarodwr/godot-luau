@@ -15,3 +15,11 @@ Route the matching instance-info callbacks to script methods when defined. ADR 0
 Each override is called in the right situations; scripts without them see no slowdown in the benchmark.
 
 Check the benchmark afterwards (`tools/bench.sh`): a feature shouldn't slow existing cases.
+
+## Benchmark cases
+
+- `api_get_override`
+- `notification_into_script`
+
+GDScript and godot-luau-script numbers for these are in
+[`docs/comparisons/godot-luau-script.md`](../docs/comparisons/godot-luau-script.md#feature-cases).

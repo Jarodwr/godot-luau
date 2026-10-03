@@ -15,3 +15,12 @@ Needs a declaration format in the script table (e.g. `exports = { speed = { type
 Benchmark cases `api_export_get`, `prop_get_export` and `prop_set_export` run. A scene saves and reloads an exported value. The inspector shows and edits it.
 
 Check the benchmark afterwards (`tools/bench.sh`): a feature shouldn't slow existing cases.
+
+## Benchmark cases
+
+- `api_export_set`
+- `api_property_accessor`
+- `prop_get_accessor`
+
+GDScript and godot-luau-script numbers for these are in
+[`docs/comparisons/godot-luau-script.md`](../docs/comparisons/godot-luau-script.md#feature-cases).

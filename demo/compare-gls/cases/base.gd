@@ -1,0 +1,1 @@
+../../benchmark/cases/base.gd

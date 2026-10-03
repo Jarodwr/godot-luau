@@ -7,9 +7,10 @@ extends SceneTree
 #     --scale=X        multiply every case's iteration count (default 1.0)
 #     --repeats=N      timed repeats per case after one warm-up (default 5)
 #     --only=TEXT      run only cases whose name contains TEXT
-#     --bench=PATH     script under test (default res://cases/luau_bench.luau)
-#     --peer=PATH      its same-language peer script (default res://cases/peer.luau)
-#     --mover=PATH     _process script for process_nodes (default res://cases/mover.luau)
+#     --lang=NAME      scripts under test: luau (godot-luau, default) or gls
+#                      (godot-luau-script, see compare-gls/); see LANGS
+#     --mover=PATH     override the _process script for process_nodes
+#                      (e.g. res://cases/mover.fnl)
 #     --fennel-only    skip the GDScript side (for profiling the Fennel side;
 #                      GDScript columns are 0 and checks "-")
 #
@@ -89,6 +90,33 @@ const CASES := [
 	{"name": "api_transform_xform", "kind": "inner", "n": 100000, "group": "api", "desc": "(Transform2D * Vector2).x"},
 	{"name": "api_array_table_in", "kind": "inner", "n": 100000, "group": "api", "desc": "build a 3-element Array literal, size()"},
 
+	# API surface (godot-luau features, todo/): builtin types, utilities, enums
+	{"name": "api_vector2_methods", "kind": "inner", "n": 100000, "group": "api", "desc": "v.normalized().dot(w) + v.distance_to(w)"},
+	{"name": "api_vector3_math", "kind": "inner", "n": 100000, "group": "api", "desc": "v = v + step * 0.5 on Vector3"},
+	{"name": "api_vector2i_math", "kind": "inner", "n": 100000, "group": "api", "desc": "a = a + Vector2i(1, 2)"},
+	{"name": "api_rect_has_point", "kind": "inner", "n": 100000, "group": "api", "desc": "Rect2.has_point(Vector2)"},
+	{"name": "api_builtin_static", "kind": "inner", "n": 100000, "group": "api", "desc": "Vector2.from_angle(0.5).x (static builtin method)"},
+	{"name": "api_utility_mix", "kind": "inner", "n": 100000, "group": "api", "desc": "clampf(...) + deg_to_rad(90)"},
+	{"name": "api_global_enum", "kind": "inner", "n": 100000, "group": "api", "desc": "read KEY_SPACE"},
+	{"name": "api_dict_iterate", "kind": "inner", "n": 100000, "group": "api", "desc": "iterate a 100-entry Dictionary (n entries visited)"},
+	{"name": "api_packed_float_array", "kind": "inner", "n": 100000, "group": "api", "desc": "PackedFloat32Array.append(x)"},
+	{"name": "api_string_godot_method", "kind": "inner", "n": 100000, "group": "api", "desc": "\"hello world\".begins_with(\"hello\")"},
+	{"name": "api_transform3d_xform", "kind": "inner", "n": 100000, "group": "api", "desc": "(Transform3D * Vector3).x"},
+
+	# Script features (godot-luau features, todo/)
+	{"name": "api_export_set", "kind": "inner", "n": 100000, "group": "api", "desc": "self.speed = x (own exported property)"},
+	{"name": "api_property_accessor", "kind": "inner", "n": 100000, "group": "api", "desc": "self.armor = i; read it (property with setter and getter)"},
+	{"name": "api_signal_emit_unconnected", "kind": "inner", "n": 100000, "group": "api", "desc": "emit own signal with no connections"},
+	{"name": "api_signal_connect", "kind": "inner", "n": 30000, "group": "api", "desc": "connect + disconnect a method Callable on own signal"},
+	{"name": "api_inherited_call", "kind": "inner", "n": 100000, "group": "api", "desc": "call a method defined in the base script"},
+	{"name": "api_super_call", "kind": "inner", "n": 100000, "group": "api", "desc": "call an override that calls the base version"},
+	{"name": "api_get_override", "kind": "inner", "n": 100000, "group": "api", "desc": "read a property answered by _get"},
+	{"name": "api_script_constant", "kind": "inner", "n": 100000, "group": "api", "desc": "read the script's own constant"},
+	{"name": "call_default_args", "kind": "boundary", "n": 200000, "group": "boundary", "desc": "obj.greet(): argument filled from the declared default"},
+	{"name": "call_typed", "kind": "boundary", "n": 200000, "group": "boundary", "desc": "obj.typed_add(i, 1.5): method with typed arguments"},
+	{"name": "prop_get_accessor", "kind": "boundary", "n": 200000, "group": "boundary", "desc": "read obj.armor (property with a getter)"},
+	{"name": "notification_into_script", "kind": "boundary", "n": 200000, "group": "boundary", "desc": "obj.notification(12345) handled by _notification"},
+
 	# Per frame
 	{"name": "process_nodes", "kind": "frame", "n": 20000, "group": "frame", "desc": "n nodes moving in _process; ns per node per frame"},
 ]
@@ -106,10 +134,31 @@ var scale := 1.0
 var repeats := 5
 var only := ""
 var fennel_only := false
-var mover_path := "res://cases/mover.luau"
-# The script under test and its same-language peer (see compare-gls/)
-var bench_path := "res://cases/luau_bench.luau"
-var peer_path := "res://cases/peer.luau"
+# Scripts per language: the bench object, fixtures under it, the mover
+const LANGS := {
+	"luau": {
+		"bench": "res://cases/luau_bench.luau",
+		"peer": "res://cases/peer.luau",
+		"derived": "res://cases/derived.luau",
+		"dynamic": "res://cases/dynamic.luau",
+		"mover": "res://cases/mover.luau",
+	},
+	"gls": {
+		"bench": "res://cases/gls_bench.lua",
+		"peer": "res://cases/gls_peer.lua",
+		"derived": "res://cases/gls_derived.lua",
+		"dynamic": "res://cases/gls_dynamic.lua",
+		"mover": "res://cases/gls_mover.lua",
+	},
+}
+const GD_FIXTURES := {
+	"peer": "res://cases/peer.gd",
+	"derived": "res://cases/derived.gd",
+	"dynamic": "res://cases/dynamic.gd",
+}
+
+var lang := "luau"
+var mover_path := ""
 var out_path := ""
 
 var gd_obj: Node
@@ -124,18 +173,18 @@ func _initialize() -> void:
 			repeats = int(arg.get_slice("=", 1))
 		elif arg.begins_with("--only="):
 			only = arg.get_slice("=", 1)
-		elif arg.begins_with("--bench="):
-			bench_path = arg.get_slice("=", 1)
-		elif arg.begins_with("--peer="):
-			peer_path = arg.get_slice("=", 1)
+		elif arg.begins_with("--lang="):
+			lang = arg.get_slice("=", 1)
 		elif arg.begins_with("--mover="):
 			mover_path = arg.get_slice("=", 1)
 		elif arg == "--fennel-only":
 			fennel_only = true
 		elif arg.begins_with("--out="):
 			out_path = arg.get_slice("=", 1)
+	if mover_path.is_empty():
+		mover_path = LANGS[lang].mover
 	if out_path.is_empty():
-		out_path = "res://results/luau.json"
+		out_path = "res://results/%s.json" % lang
 	run()
 
 
@@ -151,23 +200,25 @@ func new_from_script(script: Script) -> Object:
 
 func run() -> void:
 	gd_obj = load("res://cases/gdscript_bench.gd").new()
-	fnl_obj = new_from_script(load(bench_path))
+	fnl_obj = new_from_script(load(LANGS[lang].bench))
 	# Names of equal length: api_object_method sums get_name().length()
 	gd_obj.name = "BenchGD"
 	fnl_obj.name = "BenchFN"
 	root.add_child(gd_obj)
 	root.add_child(fnl_obj)
-	# Fixtures for the edge cases: a child Node2D, a same-language peer and a
-	# GDScript object under each bench node
-	for pair in [[gd_obj, "res://cases/peer.gd"], [fnl_obj, peer_path]]:
+	# Fixtures under each bench node: a child Node2D, same-language scripts
+	# (a peer, a script inheriting from a base script, one overriding _get)
+	# and a GDScript object
+	for pair in [[gd_obj, GD_FIXTURES], [fnl_obj, LANGS[lang]]]:
 		var child := Node2D.new()
 		child.name = "Child"
 		child.position = Vector2(3, 4)
 		pair[0].add_child(child)
-		var peer := Node.new()
-		peer.name = "Peer"
-		peer.set_script(load(pair[1]))
-		pair[0].add_child(peer)
+		for fixture in [["Peer", "peer"], ["Derived", "derived"], ["Dynamic", "dynamic"]]:
+			var node := Node.new()
+			node.name = fixture[0]
+			node.set_script(load(pair[1][fixture[1]]))
+			pair[0].add_child(node)
 		var gdhelper := Node.new()
 		gdhelper.name = "GDHelper"
 		gdhelper.set_script(load("res://cases/peer.gd"))
@@ -339,6 +390,35 @@ func b_echo_string_unique(o: Object, n: int) -> Variant:
 	for i in n:
 		s += o.echo(str(i)).length()
 	return s
+
+
+func b_call_default_args(o: Object, n: int) -> Variant:
+	var s := 0
+	for i in n:
+		s += o.greet()
+	return s
+
+
+func b_call_typed(o: Object, n: int) -> Variant:
+	var s := 0.0
+	for i in n:
+		s += o.typed_add(i, 1.5)
+	return s
+
+
+func b_prop_get_accessor(o: Object, n: int) -> Variant:
+	o.armor = 3
+	var s := 0
+	for i in n:
+		s += o.armor
+	return s
+
+
+func b_notification_into_script(o: Object, n: int) -> Variant:
+	o.notified = 0
+	for i in n:
+		o.notification(12345)
+	return o.notified
 
 
 func b_echo_vector2(o: Object, n: int) -> Variant:

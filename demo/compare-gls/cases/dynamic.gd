@@ -1,0 +1,1 @@
+../../benchmark/cases/dynamic.gd

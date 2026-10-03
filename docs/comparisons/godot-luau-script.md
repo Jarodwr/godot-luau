@@ -14,8 +14,8 @@ This compares the two on the same benchmark.
   `scons target=editor arch=arm64` (`-O2`, Godot's debug defines, like any
   editor build). godot-luau uses its `dev` preset (`-O3`, editor target).
   Both run in Godot 4.7.2 (editor binary, headless) on macOS arm64.
-- **Runs.** 7 repeats each, run one after the other on the same machine, on
-  2026-10-03. The GDScript column is the mean of both runs.
+- **Runs.** The main table: 7 repeats each, run one after the other on the
+  same machine, on 2026-10-03. The GDScript column is the mean of both runs.
 - **Where the code isn't identical** (GLS's API differs):
   - **`api_string_method`:** GLS doesn't bind Godot's String methods, so it
     uses Lua's `string.upper`. That isn't the same work, so don't compare it.
@@ -101,6 +101,59 @@ python3 ../../tools/compare_extensions.py results/godot-luau.json godot-luau \
 | `vm_map` | 161.1 | 68.1 | 0.42× | 60.7 | 0.38× |
 | `vm_string` | 60.6 | 80.6 | 1.33× | 47.2 | 0.78× |
 | `vm_table` | 28.7 | 10.9 | 0.38× | 9.3 | 0.32× |
+
+## Feature cases
+
+23 cases for the API surface and script features godot-luau is adding next.
+"not yet" means godot-luau doesn't support the case yet. Each case is listed
+in the matching `todo/` file, and starts measuring once the feature lands.
+Measured 2026-10-03: godot-luau with 5 repeats, GLS with 3.
+
+Where the GLS code differs:
+- `api_string_godot_method` uses Lua's `string.sub` (GLS has no Godot string
+  methods).
+- `api_get_override` uses `obj:Get("virtual_value")`.
+- `api_utility_mix` fails under GLS: it doesn't have `clampf`/`deg_to_rad`
+  under those names.
+
+Four cases already run in godot-luau because its design covers them:
+- **`api_vector3_math`:** Vector3 is a native Luau vector.
+- **`api_export_set`:** exported values are plain fields on `self`.
+- **`api_script_constant`:** a constant is a class-table field.
+- **`call_typed`:** an untyped method accepts typed calls.
+
+### API surface
+
+| Case | Feature (`todo/`) | GDScript | godot-luau | GLS |
+|---|---|---:|---:|---:|
+| `api_vector2_methods` | [builtin-methods](../../todo/builtin-methods.md) | 19.1 | not yet | 193.5 |
+| `api_vector3_math` | [builtin-constructors](../../todo/builtin-constructors.md) | 9.3 | 2.3 | 120.6 |
+| `api_vector2i_math` | [builtin-constructors](../../todo/builtin-constructors.md) | 6.9 | not yet | 101.4 |
+| `api_rect_has_point` | [builtin-methods](../../todo/builtin-methods.md) | 12.9 | not yet | 62.5 |
+| `api_builtin_static` | [builtin-methods](../../todo/builtin-methods.md) | 13.4 | not yet | 75.7 |
+| `api_utility_mix` | [utility-functions](../../todo/utility-functions.md) | – (not measured: neither extension runs it yet) | not yet | not yet |
+| `api_global_enum` | [constants-and-enums](../../todo/constants-and-enums.md) | 7.1 | not yet | 0.9 |
+| `api_dict_iterate` | [arrays-and-tables](../../todo/arrays-and-tables.md) | 36.7 | not yet | 793.1 |
+| `api_packed_float_array` | [builtin-constructors](../../todo/builtin-constructors.md) | 9.0 | not yet | 62.0 |
+| `api_string_godot_method` | [builtin-methods](../../todo/builtin-methods.md) | 14.0 | not yet | 6.2 |
+| `api_transform3d_xform` | [builtin-constructors](../../todo/builtin-constructors.md) | 11.6 | not yet | 177.9 |
+
+### Script features
+
+| Case | Feature (`todo/`) | GDScript | godot-luau | GLS |
+|---|---|---:|---:|---:|
+| `api_export_set` | [exports](../../todo/exports.md) | 10.4 | 3.6 | 1028.5 |
+| `api_property_accessor` | [exports](../../todo/exports.md) | 96.4 | not yet | 1780.3 |
+| `prop_get_accessor` | [exports](../../todo/exports.md) | 52.3 | not yet | 765.3 |
+| `api_signal_emit_unconnected` | [signals](../../todo/signals.md) | 46.0 | not yet | 368.1 |
+| `api_signal_connect` | [signals](../../todo/signals.md) | 196.0 | not yet | 688.3 |
+| `api_inherited_call` | [script-inheritance](../../todo/script-inheritance.md) | 58.0 | not yet | 204.3 |
+| `api_super_call` | [script-inheritance](../../todo/script-inheritance.md) | 98.5 | not yet | 167.2 |
+| `api_get_override` | [object-overrides](../../todo/object-overrides.md) | 64.0 | not yet | 1013.3 |
+| `notification_into_script` | [object-overrides](../../todo/object-overrides.md) | 68.2 | not yet | 1451.7 |
+| `api_script_constant` | [static-methods-and-constants](../../todo/static-methods-and-constants.md) | 7.0 | 2.8 | 1.5 |
+| `call_default_args` | [default-arguments](../../todo/default-arguments.md) | 57.8 | not yet | 571.8 |
+| `call_typed` | [typed-members](../../todo/typed-members.md) | 68.1 | 55.1 | 591.0 |
 
 ## Build time
 

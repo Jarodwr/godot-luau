@@ -15,3 +15,13 @@ A metatable for Luau's vector type whose `__index` maps names to Luau's builtin 
 Benchmark cases `api_vector2_method` and `api_string_method` run.
 
 Check the benchmark afterwards (`tools/bench.sh`): a feature shouldn't slow existing cases.
+
+## Benchmark cases
+
+- `api_vector2_methods`
+- `api_rect_has_point`
+- `api_builtin_static`
+- `api_string_godot_method`
+
+GDScript and godot-luau-script numbers for these are in
+[`docs/comparisons/godot-luau-script.md`](../docs/comparisons/godot-luau-script.md#feature-cases).

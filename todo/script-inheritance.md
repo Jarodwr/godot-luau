@@ -15,3 +15,11 @@ A script extending another Luau/Fennel script (`extends = "res://base.luau"`), w
 A derived script overrides one method, calls the base version, and inherits the rest.
 
 Check the benchmark afterwards (`tools/bench.sh`): a feature shouldn't slow existing cases.
+
+## Benchmark cases
+
+- `api_inherited_call`
+- `api_super_call`
+
+GDScript and godot-luau-script numbers for these are in
+[`docs/comparisons/godot-luau-script.md`](../docs/comparisons/godot-luau-script.md#feature-cases).
