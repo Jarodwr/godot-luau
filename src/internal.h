@@ -251,6 +251,20 @@ inline void release_thread(Coroutine *co) {
 // free callback)
 void cancel_coroutines_of(uint64_t owner);
 void open_coroutines(lua_State *L);
+
+// Script errors (errors.cpp, docs/adr/0037): reported as Godot script errors
+// with file, line and a backtrace of the Luau frames from `level` down
+void report_error(lua_State *thread, int level, const char *message);
+// A message with a "res://file:line:" prefix (syntax and compile errors)
+void report_message(const String &message);
+// The handler for lua_pcall on the main thread that reports errors (the
+// caller doesn't report again). It stays in the main thread's first stack
+// slot, installed when the state opens, so a pcall passes its index and
+// pushes nothing.
+constexpr int ERROR_HANDLER = 1;
+void install_error_handler(lua_State *L);
+// A readable reason for a failed engine call
+String call_error_text(const GDExtensionCallError &error);
 void clear_threads();
 
 // `value` converted to `type` where Lua's representation lost it (whole

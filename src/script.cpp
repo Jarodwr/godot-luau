@@ -261,9 +261,8 @@ static bool pcall_script_method(lua_State *L, Instance *instance, const LuauScri
 		lua_insert(L, -2 - nargs);
 		lua_insert(L, -2 - nargs);
 	}
-	if (lua_pcall(L, nargs + 1, 1, 0) != LUA_OK) {
-		UtilityFunctions::push_error(String::utf8(lua_tostring(L, -1)));
-		lua_pop(L, 1);
+	if (lua_pcall(L, nargs + 1, 1, ERROR_HANDLER) != LUA_OK) {
+		lua_pop(L, 1);  // reported by the handler
 		return false;
 	}
 	return true;
@@ -1277,17 +1276,21 @@ Error LuauScript::_reload(bool p_keep_state) {
 	if (path.get_extension() == "fnl") {
 		String lua;
 		if (!compile_fennel(L, source, path, lua)) {
-			UtilityFunctions::push_error(lua);
+			report_message(lua);
 			return ERR_PARSE_ERROR;
 		}
 		code = lua;
 	}
+	if (!load_chunk(L, code, "@" + path)) {
+		report_message(String::utf8(lua_tostring(L, -1)));  // a syntax error
+		lua_pop(L, 1);
+		return ERR_PARSE_ERROR;
+	}
 	loading.push_back(this);
-	bool ran = load_chunk(L, code, "@" + path) && lua_pcall(L, 0, 1, 0) == LUA_OK;
+	bool ran = lua_pcall(L, 0, 1, ERROR_HANDLER) == LUA_OK;
 	loading.pop_back();
 	if (!ran) {
-		UtilityFunctions::push_error(String::utf8(lua_tostring(L, -1)));
-		lua_pop(L, 1);
+		lua_pop(L, 1);  // reported by the handler
 		return ERR_PARSE_ERROR;
 	}
 	bool reload = class_ref != LUA_NOREF;

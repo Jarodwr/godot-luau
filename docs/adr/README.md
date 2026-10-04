@@ -60,3 +60,4 @@ at the same optimisation level.
 | [0034](0034-script-inheritance-and-shutdown.md) | Script inheritance through required class tables; Lua closes with the main loop | Accepted |
 | [0035](0035-await-on-pooled-threads.md) | await: calls from Godot run on pooled threads | Accepted |
 | [0036](0036-modules-and-hot-reload.md) | Modules by path, and hot reload that keeps tables and instances | Accepted |
+| [0037](0037-script-errors.md) | Script errors with location and backtrace, at no cost when nothing fails | Accepted |

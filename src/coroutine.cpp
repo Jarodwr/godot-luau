@@ -86,7 +86,7 @@ int resume_thread(lua_State *thread, int nargs) {
 		UtilityFunctions::push_error("coroutine.yield can't suspend code called from Godot; use await(signal)");
 		status = LUA_ERRRUN;
 	} else {
-		UtilityFunctions::push_error(String::utf8(lua_tostring(thread, -1)));
+		report_error(thread, 0, lua_tostring(thread, -1));  // its frames are kept
 	}
 	if (co != nullptr) {
 		reset_and_release(co);

@@ -437,8 +437,8 @@ void push_native(lua_State *L, ArgType type, NativeSlot &slot) {
 }
 
 static void push_call_error(lua_State *L, const Method &method, const GDExtensionCallError &error) {
-	lua_pushfstring(L, "error %d calling %s.%s (argument %d)", (int)error.error,
-			method.info ? method.info->class_name : "?", method.info ? method.info->method : "?", (int)error.argument);
+	lua_pushfstring(L, "%s.%s: %s", method.info ? method.info->class_name : "?", method.info ? method.info->method : "?",
+			call_error_text(error).utf8().get_data());
 }
 
 // Through Variants, for anything ptrcall doesn't handle (varargs, defaults,
@@ -1639,6 +1639,9 @@ bool compile_fennel(lua_State *L, const String &source, const String &path, Stri
 	lua_setfield(L, -2, "filename");
 	lua_pushboolean(L, false);
 	lua_setfield(L, -2, "allowedGlobals");
+	// Lua lines match the .fnl lines, so errors point at the Fennel source
+	lua_pushboolean(L, true);
+	lua_setfield(L, -2, "correlate");
 	bool ok = lua_pcall(L, 2, 1, 0) == LUA_OK;
 	size_t length;
 	const char *s = lua_tolstring(L, -1, &length);
@@ -1649,6 +1652,7 @@ bool compile_fennel(lua_State *L, const String &source, const String &path, Stri
 
 void open_state() {
 	L_main = luaL_newstate();
+	install_error_handler(L_main);
 #ifdef GODOT_LUAU_CODEGEN
 	if (luau_codegen_supported()) {
 		luau_codegen_create(L_main);

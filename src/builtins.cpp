@@ -162,7 +162,7 @@ int finish_call(lua_State *L, VariantResult &result, const GDExtensionCallError 
 		push_result(L, result);
 		return 1;
 	}
-	lua_pushfstring(L, "invalid call to %s (error %d, argument %d)", what, (int)error.error, (int)error.argument);
+	lua_pushfstring(L, "%s: %s", what, call_error_text(error).utf8().get_data());
 	return -1;
 }
 
