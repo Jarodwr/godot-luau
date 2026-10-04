@@ -54,10 +54,21 @@ is a large part of its ~440 ns bare call.
 - **Any method can wait:**
   `await(self:get_tree():create_timer(1).timeout)`; signal handlers too, which
   are closures connected with `signal:connect(function() … end)`.
-- **No measurable cost on calls:** `call_noop` 39 ns (38 before);
-  `callable_from_script`, `api_signal_emit` and `process_nodes` are within
-  noise. `notification_into_script` dropped from 58 to 41 ns, since the
-  arguments no longer need reordering for `lua_pcall`.
+- **Calls from Godot cost ~3–5 ns more.** `lua_resume` on a pooled thread
+  costs more than `lua_pcall` on the main thread. Interleaved A/B, 3 rounds
+  of 5 repeats, ns per op, before → after:
+
+  | Case | Before | After |
+  |---|---:|---:|
+  | `call_noop` | 37.9 | 41.6 |
+  | `callable_from_script` | 51.0 | 55.5 |
+  | `api_signal_emit` | 89.0 | 92.6 |
+  | `call_args6` | 113.4 | 115.3 |
+  | `notification_into_script` | 43.7 | 41.5 |
+
+  `notification_into_script` got slightly faster: its arguments no longer
+  need reordering for `lua_pcall`. Lua-to-Lua calls and engine calls from
+  Lua are unaffected.
 - **Awaiting is cheaper than GDScript's:** `api_await_signal` (start a
   coroutine, await a signal, emit it) costs 236 ns against GDScript's 597.
 - **The caller gets `nil`.** Godot gets `nil` back from a method that
