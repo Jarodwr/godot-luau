@@ -56,6 +56,7 @@ const CASES := [
 	{"name": "api_self_method", "kind": "inner", "n": 100000, "group": "api", "desc": "call own exposed method via self (through Godot for Fennel)"},
 	{"name": "api_callable_call", "kind": "inner", "n": 100000, "group": "api", "desc": "call a closure wrapped in a Callable"},
 	{"name": "api_async_method_call", "kind": "inner", "n": 50000, "group": "api", "desc": "call an async-method that doesn't await (GDScript: plain call)"},
+	{"name": "api_await_signal", "kind": "inner", "n": 20000, "group": "api", "desc": "start a coroutine that awaits a signal, then emit it"},
 
 	# Godot → script: the harness loop calls into the script object
 	{"name": "call_noop", "kind": "boundary", "n": 200000, "group": "boundary", "desc": "obj.noop(): bare call into the script"},

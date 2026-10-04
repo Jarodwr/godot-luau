@@ -228,6 +228,21 @@ function Bench:bench_api_callable_call(n)
 	return s
 end
 
+function Bench:await_once()
+	await(self.idle)
+	self.awaited += 1
+end
+
+-- Start a coroutine that waits for a signal, then emit it
+function Bench:bench_api_await_signal(n)
+	self.awaited = 0
+	for i = 1, n do
+		spawn(self.await_once, self)
+		self.idle:emit()
+	end
+	return self.awaited
+end
+
 function Bench:bench_api_async_method_call(n)
 	local s = 0
 	for i = 1, n do

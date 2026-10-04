@@ -179,6 +179,7 @@ godot-luau now has exports, signals, typed members, inheritance,
 - sandboxing with per-script permissions;
 - type definitions for autocompletion;
 - a debugger integration;
-- a task scheduler (`wait`).
+- a task scheduler (`wait`); godot-luau has `await` on signals and `spawn`
+  ([ADR 0035](../adr/0035-await-on-pooled-threads.md)).
 
 Several of these are on godot-luau's `todo/` list.

@@ -10,9 +10,10 @@ it doubles as a parity check.
 
 Done: exports and properties, signals, Lua functions as Callables, script
 inheritance, default arguments, typed members, constants, `_get`/`_set`/
-`_notification` ([ADRs 0032–0034](../docs/adr/README.md)).
+`_notification` ([ADRs 0032–0034](../docs/adr/README.md)); `await` and `spawn`
+([ADR 0035](../docs/adr/0035-await-on-pooled-threads.md)).
 
-- [await / coroutines](await-and-coroutines.md)
+- [Awaiting Luau methods from GDScript](await-from-gdscript.md)
 - [class_name / global classes](global-classes.md)
 - [Tool scripts](tool-scripts.md)
 - [Object overrides (_get_property_list, _validate_property, _to_string)](object-overrides.md)

@@ -136,6 +136,10 @@ Boss.MAX_PHASE = 3
 function Boss:_ready()
 	self.hit:connect(function(damage) self:take(damage) end)  -- a Lua function as a Callable
 end
+function Boss:charge()
+	await(self:get_tree():create_timer(1.5).timeout)  -- waits (ADR 0035)
+	self.speed *= 2
+end
 function Boss:take(damage)
 	Enemy.take(self, damage)         -- the base version
 	if self.health < 100 then self.enraged:emit() end
@@ -184,5 +188,5 @@ Missing features are tracked one per file in [`todo/`](todo/README.md).
   arguments are unaffected.
 - **Luau numbers are doubles.** Integers beyond 2^53 lose precision (same as
   LuaJIT).
-- **No await/coroutines, static functions, RPC, editor features or
-  debugging yet.** One Luau state, main thread only.
+- **No static functions, RPC, editor features or debugging yet.** One Luau
+  state, main thread only.

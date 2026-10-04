@@ -100,6 +100,7 @@ func _initialize() -> void:
 			"elementwise op %d: %s (got %s)" % [k, expected_ops[k], got_value])
 
 	feature_checks()
+	await frame_checks()
 
 	a.free()
 	print("failures: ", failures)
@@ -180,4 +181,68 @@ func feature_checks() -> void:
 	f.emit_scored(4, "lua")
 	check(f.get_lua_hits() == 4, "disconnected function no longer called")
 
+	# await (ADR 0035)
+	check(f.wait_scored() == null, "a method that awaits returns null to its caller")
+	check(f.state().get("log") == "before", "the method stopped at await")
+	f.scored.emit(3, "x")
+	check(f.state().get("log") == "before,x3", "resumed with the signal's arguments")
+	f.wait_loop(3)
+	for i in 3:
+		f.go.emit()
+	check(f.state().get("loops") == 3, "await in a loop, resumed three times")
+	f.wait_in_helper()
+	check(f.state().get("helped") == null, "await in a helper suspends the method")
+	f.go.emit()
+	check(f.state().get("helped") == true, "helper resumed")
+	f.connect_waiting_closure()
+	f.scored.emit(1, "y")
+	check(f.state().get("closure_done") == false, "signal handler closure waiting")
+	f.go.emit()
+	check(f.state().get("closure_done") == true, "signal handler closure resumed")
+	check(f.await_plain() == 5, "await of a plain value returns it at once")
+	check(f.get("awaiting") == null, "await in a getter is an error (reads null)")
+	f.wait_loop(2)
+	f.go.emit()
+	f.go.emit()
+	f.go.emit()
+	check(f.state().get("loops") == 2, "a finished coroutine isn't resumed again")
+
+	f.spawn_two()
+	check(f.state().get("spawned") == 10, "spawn returns at the first await")
+	f.go.emit()
+	check(f.state().get("spawned") == 12, "both spawned functions resumed")
+
+	# A coroutine of a freed object doesn't continue
+	var g = Node.new()
+	g.set_script(script)
+	root.add_child(g)
+	g.wait_on(f.go)
+	g.free()
+	f.go.emit()
+	check(true, "emitting after the waiting object was freed doesn't crash")
+	check(f.wait_on_result(f.go) == null and f.go.get_connections().size() == 1, "waiting on another object's signal")
+	f.go.emit()
+	check(f.go.get_connections().size() == 0, "one-shot connection removed after resuming")
+
 	f.free()
+
+
+# GDScript coroutine awaited from Luau
+func gd_wait() -> int:
+	await process_frame
+	return 7
+
+
+# await across frames: a timer, and a GDScript coroutine (ADR 0035)
+func frame_checks() -> void:
+	await process_frame  # the root enters the tree after _initialize
+	var t = Node.new()
+	t.set_script(load("res://features/derived.luau"))
+	root.add_child(t)
+	t.wait_timer()
+	t.wait_gdscript(self)
+	check(t.state().get("timer_done") == null, "timer not fired yet")
+	await create_timer(0.1).timeout
+	check(t.state().get("timer_done") == true, "await on a SceneTreeTimer")
+	check(t.state().get("gd_result") == 7, "await on a GDScript coroutine gives its result")
+	t.free()

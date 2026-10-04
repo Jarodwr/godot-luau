@@ -200,6 +200,20 @@ Variant lua_function_to_callable(lua_State *L, int index);
 // If `value` is a Callable made from a Lua function, pushes that function
 bool push_lua_function_of(lua_State *L, const Variant &value);
 
+// Coroutines (coroutine.cpp, docs/adr/0035). Calls from Godot run on pooled
+// threads so they can `await`.
+lua_State *acquire_thread();
+// Runs the function and its `nargs` arguments pushed on `thread` (or resumes
+// it with `nargs` values). LUA_OK: the results are on the thread's stack; the
+// caller reads them, then calls release_thread. LUA_YIELD: suspended in
+// `await`, and owned by it from now on. Anything else: the error was
+// reported and the thread released. `owner` (an ObjectID, or 0): the object
+// whose method this is; a coroutine isn't resumed after it is freed.
+int run_thread(lua_State *thread, int nargs, uint64_t owner);
+void release_thread(lua_State *thread);
+void open_coroutines(lua_State *L);
+void clear_threads();
+
 // `value` converted to `type` where Lua's representation lost it (whole
 // floats read as ints, Vector3 with z = 0 read as Vector2); NIL: unchanged
 Variant coerce_to_type(const Variant &value, Variant::Type type);

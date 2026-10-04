@@ -655,7 +655,8 @@ static void call_func(Instance *instance, GDExtensionConstStringNamePtr p_method
 		r_error->error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 		return;
 	}
-	lua_State *L = state();
+	// On a pooled thread, so the method can await (docs/adr/0035)
+	lua_State *L = acquire_thread();
 	lua_getref(L, method->ref);
 	lua_getref(L, instance->table_ref);
 	bool typed = !method->arg_types.is_empty();
@@ -680,27 +681,29 @@ static void call_func(Instance *instance, GDExtensionConstStringNamePtr p_method
 		lua_remove(L, table);
 	}
 	r_error->error = GDEXTENSION_CALL_OK;
-	if (lua_pcall(L, pushed + 1, 1, 0) != LUA_OK) {
-		UtilityFunctions::push_error(String::utf8(lua_tostring(L, -1)));
-		lua_pop(L, 1);
-		return;
+	if (run_thread(L, pushed + 1, gdextension_interface::object_get_instance_id(instance->owner)) != LUA_OK) {
+		return;  // suspended in await (the caller gets nil), or failed
 	}
-	if (method->has_ret_type) {
-		to_typed(L, -1, method->ret_type, (Variant *)r_ret);
-	} else {
-		to_variant_into_nil(L, -1, (Variant *)r_ret);
+	if (lua_gettop(L) > 0) {
+		if (method->has_ret_type) {
+			to_typed(L, 1, method->ret_type, (Variant *)r_ret);
+		} else {
+			to_variant_into_nil(L, 1, (Variant *)r_ret);
+		}
 	}
-	lua_pop(L, 1);
+	release_thread(L);
 }
 
 static void notification_func(Instance *instance, int32_t what, GDExtensionBool) {
 	if (!instance->script->notification_method) {
 		return;
 	}
-	lua_State *L = state();
+	lua_State *L = acquire_thread();
+	lua_getref(L, instance->script->notification_method->ref);
+	lua_getref(L, instance->table_ref);
 	lua_pushinteger(L, what);
-	if (pcall_script_method(L, instance, instance->script->notification_method, 1)) {
-		lua_pop(L, 1);
+	if (run_thread(L, 2, gdextension_interface::object_get_instance_id(instance->owner)) == LUA_OK) {
+		release_thread(L);
 	}
 }
 

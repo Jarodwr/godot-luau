@@ -284,6 +284,22 @@ func bench_api_callable_call(n: int) -> int:
 	return s
 
 
+var awaited := 0
+
+func await_once() -> void:
+	await idle
+	awaited += 1
+
+
+# Start a coroutine that waits for a signal, then emit it
+func bench_api_await_signal(n: int) -> int:
+	awaited = 0
+	for i in range(n):
+		await_once()
+		idle.emit()
+	return awaited
+
+
 func bench_api_async_method_call(n: int) -> int:
 	var s := 0
 	for i in range(1, n + 1):

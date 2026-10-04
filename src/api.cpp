@@ -1665,6 +1665,7 @@ void open_state() {
 		lua_call(L_main, 0, 0);
 	}
 	register_globals(L_main);
+	open_coroutines(L_main);
 	load_fennel(L_main);
 	// Globals are set up: let loaded code cache global lookups and use the
 	// builtin fast calls. Fennel only calls setfenv on its own macro
@@ -1704,6 +1705,7 @@ Variant coerce_to_type(const Variant &value, Variant::Type type) {
 
 void close_state() {
 	generation++;
+	clear_threads();
 	clear_builtins();
 	name_strings.clear();
 	node_paths.clear();

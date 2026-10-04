@@ -12,10 +12,12 @@ local Features = {
 	properties = {
 		armor = { type = "int", default = 1, set = "set_armor", get = "get_armor" },
 		readonly = { type = "int", get = "get_readonly" },
+		awaiting = { type = "int", get = "get_awaiting" },
 		ratio = { type = "float", default = 0 },       -- int default coerced
 	},
 	signals = {
 		scored = { "points: int", "by" },
+		go = {},
 	},
 	defaults = {
 		greet = { "world", "!" },
@@ -70,5 +72,54 @@ function Features:get_lua_hits() return self.lua_hits end
 function Features:get_notified() return self.notified end
 function Features:get_virtual_written() return self.virtual_written end
 function Features:constant() return self.GREETING .. " " .. tostring(self.MAX_HEALTH) end
+
+-- await (docs/adr/0035)
+function Features:wait_scored()
+	self.log = {}
+	table.insert(self.log, "before")
+	local points, by = await(self.scored)
+	table.insert(self.log, by .. points)
+	return "unused"
+end
+function Features:wait_loop(times)
+	self.loops = 0
+	for i = 1, times do
+		await(self.go)
+		self.loops += 1
+	end
+end
+local function helper(self)
+	await(self.go)  -- suspends the whole method that called it
+	self.helped = true
+end
+function Features:wait_in_helper() helper(self) end
+function Features:connect_waiting_closure()
+	self.closure_done = false
+	self.scored:connect(function()
+		await(self.go)
+		self.closure_done = true
+	end, 4)  -- CONNECT_ONE_SHOT
+end
+function Features:wait_on(signal) await(signal); self.after = true end
+function Features:wait_on_result(signal) await(signal) end
+function Features:wait_timer()
+	await(self:get_tree():create_timer(0.02).timeout)
+	self.timer_done = true
+end
+function Features:wait_gdscript(tree) self.gd_result = await(tree:gd_wait()) end
+function Features:spawn_two()
+	self.spawned = 0
+	local function waiter() await(self.go); self.spawned += 1 end
+	spawn(waiter)
+	spawn(waiter)
+	self.spawned += 10  -- runs before either waiter resumes
+end
+function Features:await_plain() return await(5) end
+function Features:get_awaiting() return await(self.go) end
+function Features:state()
+	return { kind = "state", log = self.log and table.concat(self.log, ","), loops = self.loops,
+		helped = self.helped, closure_done = self.closure_done,
+		timer_done = self.timer_done, spawned = self.spawned, gd_result = self.gd_result }
+end
 
 return Features

@@ -58,3 +58,4 @@ at the same optimisation level.
 | [0032](0032-script-declarations.md) | Script features are declared in the class table | Accepted |
 | [0033](0033-lua-functions-as-callables.md) | Lua functions are Godot Callables | Accepted |
 | [0034](0034-script-inheritance-and-shutdown.md) | Script inheritance through required class tables; Lua closes with the main loop | Accepted |
+| [0035](0035-await-on-pooled-threads.md) | await: calls from Godot run on pooled threads | Accepted |
