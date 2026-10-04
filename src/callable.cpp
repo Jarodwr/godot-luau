@@ -32,19 +32,25 @@ void call(void *userdata, const GDExtensionConstVariantPtr *args, GDExtensionInt
 		return;
 	}
 	// On a pooled thread, so the function can await (docs/adr/0035)
-	lua_State *L = acquire_thread();
+	Coroutine *co = acquire_thread(0);
+	lua_State *L = co->thread;
 	lua_getref(L, c->ref);
 	for (GDExtensionInt i = 0; i < argc; i++) {
 		push_variant(L, *static_cast<const Variant *>(args[i]));
 	}
 	r_error->error = GDEXTENSION_CALL_OK;
-	if (run_thread(L, (int)argc, 0) != LUA_OK) {
+	if (run_thread(co, (int)argc) != LUA_OK) {
 		return;
 	}
 	if (lua_gettop(L) > 0) {
-		*static_cast<Variant *>(r_return) = to_variant(L, 1);
+		Variant *ret = static_cast<Variant *>(r_return);
+		if (ret->get_type() == Variant::NIL) {
+			to_variant_into_nil(L, 1, ret);  // built in place
+		} else {
+			*ret = to_variant(L, 1);
+		}
 	}
-	release_thread(L);
+	release_thread(co);
 }
 
 GDExtensionBool is_valid(void *userdata) {

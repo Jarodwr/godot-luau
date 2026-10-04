@@ -15,75 +15,75 @@
 
 #include <vector>
 
+
 using namespace godot;
 
 namespace luau {
 
+Coroutine *idle_threads = nullptr;
+
 namespace {
 
-// Thread data of pooled threads (user coroutines have none)
-struct ThreadInfo {
-	int ref;         // keeps the thread alive while the state lives
-	uint64_t owner;  // ObjectID of the object whose method runs on it, or 0
-};
-
-std::vector<lua_State *> idle;
+std::vector<Coroutine *> all_threads;  // idle or suspended, freed with the state
+lua_State *main_thread = nullptr;
 lua_State *running = nullptr;  // the thread now running, for lua_resume's `from`
 
-void reset_and_release(lua_State *thread) {
+// Resumes `thread` (fresh with a function and arguments, or suspended) with
+// `nargs` values on its stack. Errors are reported and leave it reset.
+int resume_thread(lua_State *thread, int nargs) {
+	lua_State *outer = running;
+	running = thread;
+	int status = lua_resume(thread, outer ? outer : main_thread, nargs);
+	running = outer;
+	if (status == LUA_OK || status == LUA_YIELD) {
+		return status;
+	}
+	UtilityFunctions::push_error(String::utf8(lua_tostring(thread, -1)));
 	lua_resetthread(thread);
-	if (lua_getthreaddata(thread) != nullptr) {
-		idle.push_back(thread);
+	return status;
+}
+
+// After a thread finished, failed or was abandoned: pooled ones go back
+void reset_and_release(lua_State *thread) {
+	if (lua_status(thread) != LUA_OK) {
+		lua_resetthread(thread);
+	}
+	if (Coroutine *co = static_cast<Coroutine *>(lua_getthreaddata(thread))) {
+		release_thread(co);
 	}
 }
 
 } // namespace
 
-lua_State *acquire_thread() {
-	if (!idle.empty()) {
-		lua_State *thread = idle.back();
-		idle.pop_back();
-		return thread;
-	}
+Coroutine *new_thread() {
 	lua_State *L = state();
-	lua_State *thread = lua_newthread(L);
-	ThreadInfo *info = new ThreadInfo{ lua_ref(L, -1), 0 };
+	main_thread = L;
+	Coroutine *co = new Coroutine();
+	co->thread = lua_newthread(L);
+	co->ref = lua_ref(L, -1);
 	lua_pop(L, 1);
-	lua_setthreaddata(thread, info);
-	return thread;
+	lua_setthreaddata(co->thread, co);
+	all_threads.push_back(co);
+	return co;
 }
 
-void release_thread(lua_State *thread) {
-	lua_settop(thread, 0);
-	if (lua_getthreaddata(thread) != nullptr) {
-		idle.push_back(thread);
+int run_thread(Coroutine *co, int nargs) {
+	int status = resume_thread(co->thread, nargs);
+	if (status != LUA_OK && status != LUA_YIELD) {
+		release_thread(co);  // reset by resume_thread
 	}
-}
-
-int run_thread(lua_State *thread, int nargs, uint64_t owner) {
-	ThreadInfo *info = static_cast<ThreadInfo *>(lua_getthreaddata(thread));
-	if (info != nullptr && lua_status(thread) == LUA_OK) {
-		info->owner = owner;  // a fresh call
-	}
-	lua_State *from = running ? running : state();
-	running = thread;
-	int status = lua_resume(thread, from, nargs);
-	running = from == state() ? nullptr : from;
-	if (status == LUA_OK || status == LUA_YIELD) {
-		return status;
-	}
-	UtilityFunctions::push_error(String::utf8(lua_tostring(thread, -1)));
-	reset_and_release(thread);
 	return status;
 }
 
 void clear_threads() {
 	// The threads themselves die with the state
-	for (lua_State *thread : idle) {
-		delete static_cast<ThreadInfo *>(lua_getthreaddata(thread));
+	for (Coroutine *co : all_threads) {
+		delete co;
 	}
-	idle.clear();
+	all_threads.clear();
+	idle_threads = nullptr;
 	running = nullptr;
+	main_thread = nullptr;
 }
 
 namespace {
@@ -103,8 +103,8 @@ bool alive(const Resumer *r) {
 }
 
 bool owner_freed(lua_State *thread) {
-	ThreadInfo *info = static_cast<ThreadInfo *>(lua_getthreaddata(thread));
-	return info != nullptr && info->owner != 0 && ObjectDB::get_instance(info->owner) == nullptr;
+	Coroutine *co = static_cast<Coroutine *>(lua_getthreaddata(thread));
+	return co != nullptr && co->owner != 0 && ObjectDB::get_instance(co->owner) == nullptr;
 }
 
 void resume(void *userdata, const GDExtensionConstVariantPtr *args, GDExtensionInt argc, GDExtensionVariantPtr, GDExtensionCallError *r_error) {
@@ -122,8 +122,9 @@ void resume(void *userdata, const GDExtensionConstVariantPtr *args, GDExtensionI
 	for (GDExtensionInt i = 0; i < argc; i++) {
 		push_variant(r->thread, *static_cast<const Variant *>(args[i]));
 	}
-	if (run_thread(r->thread, (int)argc, 0) == LUA_OK) {
-		release_thread(r->thread);  // results go nowhere: the caller has moved on
+	int status = resume_thread(r->thread, (int)argc);
+	if (status != LUA_YIELD) {
+		reset_and_release(r->thread);  // results go nowhere: the caller has moved on
 	}
 }
 
@@ -209,13 +210,12 @@ int lua_await(lua_State *L) {
 // coroutine function does this implicitly).
 int lua_spawn(lua_State *L) {
 	luaL_checktype(L, 1, LUA_TFUNCTION);
-	ThreadInfo *info = static_cast<ThreadInfo *>(lua_getthreaddata(L));
-	uint64_t owner = info != nullptr ? info->owner : 0;
+	Coroutine *current = static_cast<Coroutine *>(lua_getthreaddata(L));
 	int n = lua_gettop(L);
-	lua_State *thread = acquire_thread();
-	lua_xmove(L, thread, n);
-	if (run_thread(thread, n - 1, owner) == LUA_OK) {
-		release_thread(thread);
+	Coroutine *co = acquire_thread(current != nullptr ? current->owner : 0);
+	lua_xmove(L, co->thread, n);
+	if (run_thread(co, n - 1) == LUA_OK) {
+		release_thread(co);
 	}
 	return 0;
 }

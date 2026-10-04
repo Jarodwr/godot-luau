@@ -202,15 +202,37 @@ bool push_lua_function_of(lua_State *L, const Variant &value);
 
 // Coroutines (coroutine.cpp, docs/adr/0035). Calls from Godot run on pooled
 // threads so they can `await`.
-lua_State *acquire_thread();
-// Runs the function and its `nargs` arguments pushed on `thread` (or resumes
-// it with `nargs` values). LUA_OK: the results are on the thread's stack; the
-// caller reads them, then calls release_thread. LUA_YIELD: suspended in
-// `await`, and owned by it from now on. Anything else: the error was
-// reported and the thread released. `owner` (an ObjectID, or 0): the object
-// whose method this is; a coroutine isn't resumed after it is freed.
-int run_thread(lua_State *thread, int nargs, uint64_t owner);
-void release_thread(lua_State *thread);
+struct Coroutine {
+	lua_State *thread;
+	int ref;         // keeps the thread alive while the state lives
+	uint64_t owner;  // ObjectID of the object whose method runs, or 0
+	Coroutine *next; // in the idle list
+};
+extern Coroutine *idle_threads;
+Coroutine *new_thread();
+// An idle pooled thread with an empty stack. `owner` (an ObjectID, or 0): the
+// object whose method runs on it; a coroutine isn't resumed after that
+// object is freed. Inline: it's on every call from Godot.
+inline Coroutine *acquire_thread(uint64_t owner) {
+	Coroutine *co = idle_threads;
+	if (co != nullptr) {
+		idle_threads = co->next;
+	} else {
+		co = new_thread();
+	}
+	co->owner = owner;
+	return co;
+}
+// Runs the function and its `nargs` arguments pushed on the thread.
+// LUA_OK: the results are on the thread's stack; the caller reads them, then
+// calls release_thread. LUA_YIELD: suspended in `await`, which owns it from
+// now on. Anything else: the error was reported and the thread released.
+int run_thread(Coroutine *co, int nargs);
+inline void release_thread(Coroutine *co) {
+	lua_settop(co->thread, 0);
+	co->next = idle_threads;
+	idle_threads = co;
+}
 void open_coroutines(lua_State *L);
 void clear_threads();
 
