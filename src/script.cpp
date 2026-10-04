@@ -779,8 +779,13 @@ static void call_func(Instance *instance, GDExtensionConstStringNamePtr p_method
 		lua_remove(L, table);
 	}
 	r_error->error = GDEXTENSION_CALL_OK;
-	if (run_thread(co, pushed + 1) != LUA_OK) {
-		return;  // suspended in await (the caller gets nil), or failed
+	int status = run_thread(co, pushed + 1);
+	if (status == LUA_YIELD) {
+		*(Variant *)r_ret = completion_signal(co);  // GDScript can await it
+		return;
+	}
+	if (status != LUA_OK) {
+		return;  // failed: reported
 	}
 	if (lua_gettop(L) > 0) {
 		if (method->has_ret_type) {

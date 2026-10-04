@@ -39,7 +39,12 @@ void call(void *userdata, const GDExtensionConstVariantPtr *args, GDExtensionInt
 		push_variant(L, *static_cast<const Variant *>(args[i]));
 	}
 	r_error->error = GDEXTENSION_CALL_OK;
-	if (run_thread(co, (int)argc) != LUA_OK) {
+	int status = run_thread(co, (int)argc);
+	if (status == LUA_YIELD) {
+		*static_cast<Variant *>(r_return) = completion_signal(co);  // awaitable
+		return;
+	}
+	if (status != LUA_OK) {
 		return;
 	}
 	if (lua_gettop(L) > 0) {

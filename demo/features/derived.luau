@@ -133,6 +133,9 @@ function Features:churn(n)
 	end
 end
 function Features:wait_forever(signal) await(signal); self.never = true end
+function Features:wait_then_return(n) await(self.go); return n * 2 end
+function Features:return_at_once(n) return n + 1 end
+function Features:wait_then_fail() await(self.go); error("failed while awaited") end
 function Features:await_plain() return await(5) end
 function Features:get_awaiting() return await(self.go) end
 function Features:state()

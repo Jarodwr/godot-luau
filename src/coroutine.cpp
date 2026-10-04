@@ -55,8 +55,37 @@ void count_waiting(uint64_t owner, int delta) {
 	}
 }
 
+// Frees the completion object of a coroutine that won't finish: whoever
+// awaits it never resumes, as when GDScript awaits a freed object's function
+void drop_completion(Coroutine *co) {
+	if (co->completion != 0) {
+		if (Object *object = ObjectDB::get_instance(co->completion)) {
+			memdelete(object);
+		}
+		co->completion = 0;
+	}
+}
+
+// A coroutine resumed from await ran to its end: its result goes to whoever
+// awaits its completion signal, then the thread goes back
+void finish(Coroutine *co) {
+	if (co->completion == 0) {
+		release_thread(co);
+		return;
+	}
+	Variant result = lua_gettop(co->thread) > 0 ? to_variant(co->thread, 1) : Variant();
+	uint64_t completion = co->completion;
+	co->completion = 0;
+	release_thread(co);  // before emitting: the awaiting code may call back in
+	if (Object *object = ObjectDB::get_instance(completion)) {
+		object->emit_signal("completed", result);
+		memdelete(object);
+	}
+}
+
 // A suspended or failed pooled thread back to the pool
 void reset_and_release(Coroutine *co) {
+	drop_completion(co);
 	if (co->awaiting) {
 		co->awaiting = false;
 		count_waiting(co->owner, -1);
@@ -126,6 +155,19 @@ int run_thread(Coroutine *co, int nargs) {
 	return resume_thread(co->thread, nargs);
 }
 
+Variant completion_signal(Coroutine *co) {
+	if (co->completion == 0) {
+		Object *object = memnew(Object);
+		Dictionary arg;
+		arg["name"] = "result";
+		Array args;
+		args.push_back(arg);
+		object->add_user_signal("completed", args);
+		co->completion = object->get_instance_id();
+	}
+	return Signal(ObjectDB::get_instance(co->completion), "completed");
+}
+
 void cancel_coroutines_of(uint64_t owner) {
 	if (!waiting_by_owner.has(owner)) {
 		return;  // the common case: nothing suspended
@@ -145,6 +187,7 @@ void cancel_coroutines_of(uint64_t owner) {
 void clear_threads() {
 	// The threads themselves die with the state
 	for (Coroutine *co : all_threads) {
+		drop_completion(co);
 		delete co;
 	}
 	all_threads.clear();
@@ -207,7 +250,7 @@ void resume(void *userdata, const GDExtensionConstVariantPtr *args, GDExtensionI
 		push_variant(r->thread, *static_cast<const Variant *>(args[i]));
 	}
 	if (resume_thread(r->thread, (int)argc) == LUA_OK && co != nullptr) {
-		release_thread(co);  // results go nowhere: the caller has moved on
+		finish(co);  // results go to an awaiting caller, if any
 	}
 }
 

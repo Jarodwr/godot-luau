@@ -95,7 +95,7 @@ is a large part of its ~440 ns bare call.
   coroutine, await a signal, emit it) costs 236 ns against GDScript's 597.
 - **The caller gets `nil`.** Godot gets `nil` back from a method that
   suspends. Unlike a GDScript coroutine, it can't be awaited from GDScript
-  (`todo/await-from-gdscript.md`).
+  (later: a Signal it can await, [0038](0038-awaiting-luau-from-gdscript.md)).
 - **Fennel** calls them the same way: `(await self.go)`, `(spawn f)`.
 - **Leak checks** in `demo/checks.gd` use `__luau_thread_stats()` (thread
   counts, pending resumers, Lua memory after a full collection):

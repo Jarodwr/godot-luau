@@ -208,6 +208,8 @@ struct Coroutine {
 	uint64_t owner;   // ObjectID of the object whose method runs, or 0
 	uint32_t serial;  // changes on every acquire: tells a stale resumer apart
 	bool awaiting;    // suspended in await (not coroutine.yield)
+	uint64_t completion;  // ObjectID of the object whose `completed` signal
+	                      // a caller from Godot awaits, or 0 (docs/adr/0038)
 	size_t index;     // in the list of all pooled threads
 	Coroutine *next;  // in the idle list
 };
@@ -230,6 +232,7 @@ inline Coroutine *acquire_thread(uint64_t owner) {
 	co->owner = owner;
 	co->serial++;
 	co->awaiting = false;
+	co->completion = 0;
 	return co;
 }
 // Runs the function and its `nargs` arguments pushed on the thread.
@@ -247,6 +250,9 @@ inline void release_thread(Coroutine *co) {
 		drop_thread(co);
 	}
 }
+// What a call from Godot returns when it suspended: a Signal emitted with the
+// call's result when the coroutine finishes, so GDScript can `await` it
+Variant completion_signal(Coroutine *co);
 // Drops the suspended coroutines of a freed object (its script instance's
 // free callback)
 void cancel_coroutines_of(uint64_t owner);
