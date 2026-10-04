@@ -1,14 +1,17 @@
-# Object overrides (_notification, _get, _set, _get_property_list)
+# Object overrides (_get_property_list, _validate_property, _to_string)
 
 **Area:** Script features
 
 ## What
 
-Scripts overriding `_notification`, `_get`, `_set`, `_get_property_list`, `_validate_property`, `_to_string`.
+Scripts overriding `_get_property_list`, `_validate_property`, `_to_string`,
+`_property_can_revert`/`_property_get_revert`. `_get`, `_set` and
+`_notification` are done ([ADR 0032](../docs/adr/0032-script-declarations.md)).
 
 ## Approach
 
-Route the matching instance-info callbacks to script methods when defined. ADR 0005's routes already treat `_get`/`_set` specially; keep those paths off the hot path when a script doesn't define them.
+Route the matching instance-info callbacks to script methods when defined,
+found once at load like `_get` (a method pointer, nothing per call otherwise).
 
 ## Done when
 
@@ -16,10 +19,3 @@ Each override is called in the right situations; scripts without them see no slo
 
 Check the benchmark afterwards (`tools/bench.sh`): a feature shouldn't slow existing cases.
 
-## Benchmark cases
-
-- `api_get_override`
-- `notification_into_script`
-
-GDScript and godot-luau-script numbers for these are in
-[`docs/comparisons/godot-luau-script.md`](../docs/comparisons/godot-luau-script.md#feature-cases).

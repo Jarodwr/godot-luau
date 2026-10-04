@@ -99,6 +99,85 @@ func _initialize() -> void:
 		check(typeof(got_value) == typeof(expected_ops[k]) and got_value == expected_ops[k],
 			"elementwise op %d: %s (got %s)" % [k, expected_ops[k], got_value])
 
+	feature_checks()
+
 	a.free()
 	print("failures: ", failures)
 	quit(failures)
+
+
+# Script declarations, inheritance, overrides and Lua Callables (ADRs 0032-0034)
+func feature_checks() -> void:
+	var script: Script = load("res://features/derived.luau")
+	var f = Node.new()
+	f.set_script(script)
+	root.add_child(f)
+
+	# Exports and properties
+	var props := {}
+	for p in f.get_property_list():
+		props[p.name] = p
+	check(props.has("speed") and props.speed.type == TYPE_FLOAT and props.speed.usage & PROPERTY_USAGE_EDITOR, "export inferred from a default is a float in the editor")
+	check(props.has("label") and props.label.type == TYPE_STRING, "export declared by type name")
+	check(props.has("target") and props.target.hint == PROPERTY_HINT_NODE_TYPE, "Node export gets a node hint")
+	check(props.has("health") and props.health.hint == PROPERTY_HINT_RANGE, "inherited export with a range")
+	check(props.has("armor") and not (props.armor.usage & PROPERTY_USAGE_EDITOR), "plain property isn't shown in the editor")
+	check(f.speed == 2.5 and f.label == "" and f.target == null and f.health == 10, "defaults and zero values")
+	f.speed = 4
+	check(typeof(f.speed) == TYPE_FLOAT and f.speed == 4.0, "typed property coerces int to float")
+	check(typeof(f.ratio) == TYPE_FLOAT, "int default of a float property is a float")
+	f.armor = 3
+	check(f.armor == 6, "setter and getter")
+	check(f.readonly == 42, "getter-only property")
+	check(script.get_property_default_value("speed") == 2.5, "script reports property defaults")
+
+	# Constants
+	var constants := script.get_script_constant_map()
+	check(constants.get("GREETING") == "hi" and constants.get("MAX_HEALTH") == 100, "constants, own and inherited")
+	check(f.constant() == "hi 100", "constants through self")
+
+	# Inheritance
+	check(script.get_base_script() != null and script.get_base_script().resource_path == "res://features/base.luau", "base script")
+	check(f.hurt(3) == 7, "inherited method using an inherited property")
+	check(f.describe() == "base+derived", "override calling the base version")
+	check(f.has_method("hurt") and f.has_method("describe"), "has_method sees own and inherited methods")
+	check(script.get_global_name() == &"LuauFeatures", "class_name")
+
+	# Default arguments and typed members
+	check(f.greet() == "hello world!", "both arguments defaulted")
+	check(f.greet("you") == "hello you!", "rightmost argument defaulted")
+	check(f.greet("you", "?") == "hello you?", "no argument defaulted")
+	var sum = f.typed_add(2.9, 1)
+	check(typeof(sum) == TYPE_FLOAT and sum == 3.0, "typed arguments and return are coerced (got %s)" % sum)
+
+	# Overrides
+	check(f.get("virtual") == 7, "_get answers an unknown property")
+	f.set("virtual", 9)
+	check(f.get_virtual_written() == 9, "_set receives an unknown property")
+	f.notification(12345)
+	check(f.get_notified() == 12345, "_notification")
+
+	# Signals
+	check(f.has_signal("scored") and f.has_signal("died"), "own and inherited signals")
+	var got := []
+	f.scored.connect(func(points, by): got.append([points, by]))
+	f.emit_scored(5, "me")
+	check(got == [[5, "me"]], "signal declared in Luau reaches GDScript")
+	var died := [false]
+	f.died.connect(func(): died[0] = true)
+	f.hurt(100)
+	check(died[0], "inherited signal emitted by an inherited method")
+
+	# Lua functions as Callables
+	var adder = f.make_adder(10)
+	check(adder is Callable and adder.call(5) == 15, "Lua closure called from GDScript")
+	check(f.take_callable(func(x): return x * 3) == 15, "GDScript Callable called from Lua")
+	check(f.take_callable(adder) == 15, "Lua Callable comes back as the Lua function")
+	check(f.connect_lua(), "Lua function connected, equal Callable found")
+	f.emit_scored(4, "lua")
+	check(f.get_lua_hits() == 4, "Lua function receives the signal")
+	check(not f.disconnect_lua(), "Lua function disconnected")
+	f.emit_scored(4, "lua")
+	check(f.get_lua_hits() == 4, "disconnected function no longer called")
+
+	f.free()

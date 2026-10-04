@@ -39,27 +39,32 @@ use it through a symlink.
 
 ## Performance
 
-ns per op, `tools/bench.sh` (9 repeats, macOS arm64, Godot 4.7 editor build).
-All checksums match GDScript.
+ns per op, `demo/benchmark/runner.gd` (7 repeats, macOS arm64, Godot 4.7
+editor build). All checksums match GDScript.
 
 | Case | GDScript | godot-luau |
 |---|---:|---:|
-| Bare call into a script (`call_noop`) | 39 | 36 |
-| Script field read+write (`api_dynamic_field`) | 6.8 | 4.9 |
-| Own method via `self` (`api_self_method`) | 52 | 8.8 |
-| Engine property read (`api_object_prop_get`) | 20 | 27 |
-| Engine property write (`api_object_prop_set`) | 26 | 32 |
-| Singleton method (`api_singleton_call`) | 12 | 15 |
-| `get_node("Child")` (`api_get_node`) | 31 | 46 |
-| Object result (`api_object_return`) | 22 | 32 |
-| Call a GDScript object's method (`api_gdscript_call`) | 56 | 61 |
-| String in and out (`echo_string`) | 70 | 117 |
-| Six mixed arguments (`call_args6`) | 73 | 103 |
-| Node create + free (`api_node_create`) | 132 | 135 |
-| Two Vector2 operations (`api_vector2_math`) | 9.0 | 1.9 |
-| `_process` per node, 20,000 movers | 139 | 139 |
+| Bare call into a script (`call_noop`) | 38 | 36 |
+| Script field read+write (`api_dynamic_field`) | 6.7 | 5.1 |
+| Own method via `self` (`api_self_method`) | 53 | 8.8 |
+| Engine property read (`api_object_prop_get`) | 20 | 29 |
+| Engine property write (`api_object_prop_set`) | 27 | 34 |
+| Singleton method (`api_singleton_call`) | 13 | 15 |
+| `get_node("Child")` (`api_get_node`) | 32 | 50 |
+| Object result (`api_object_return`) | 24 | 35 |
+| Call a GDScript object's method (`api_gdscript_call`) | 56 | 64 |
+| String in and out (`echo_string`) | 69 | 119 |
+| Six mixed arguments (`call_args6`) | 72 | 113 |
+| Node create + free (`api_node_create`) | 135 | 138 |
+| Two Vector2 operations (`api_vector2_math`) | 9.1 | 1.9 |
+| Exported property from Lua (`api_export_get`) | 7.0 | 2.3 |
+| Exported property read by GDScript (`prop_get_export`) | 22 | 43 |
+| Emit a connected signal (`api_signal_emit`) | 111 | 87 |
+| Call a Lua function as a Callable (`api_callable_call`) | 46 | 6.6 |
+| Override calling the base version (`api_super_call`) | 92 | 16 |
+| `_process` per node, 20,000 nodes (`process_nodes`) | 147 | 150 |
 
-The full run (58 cases, including ones that need missing features) is in
+The full run (every case in the benchmark) is in
 `demo/benchmark/results/luau.json`. A comparison with
 [godot-luau-script](https://git.seki.pw/Fumohouse/godot-luau-script) on the
 same benchmark is in
@@ -73,6 +78,9 @@ Remaining gaps:
   ([0023](docs/adr/0023-cheaper-string-conversions.md)).
 - **Script instantiation:** `script.new()` is ~2× GDScript, mostly inside
   Godot's `set_script` ([0022](docs/adr/0022-script-instantiation-cost.md)).
+- **Godot reading script properties:** ~2× GDScript (`prop_get_export`), a
+  property-index lookup and a table read behind Godot's script-instance call
+  ([0032](docs/adr/0032-script-declarations.md)).
 
 To benchmark:
 
@@ -107,6 +115,32 @@ return Mover
 (fn Mover._process [self delta]
   (set self.position (+ self.position (* self.velocity delta))))
 Mover
+```
+
+Exports, properties, signals, defaults, types, inheritance and constants are
+declared in the same table
+([0032](docs/adr/0032-script-declarations.md),
+[0034](docs/adr/0034-script-inheritance-and-shutdown.md)):
+
+```lua
+local Enemy = require("res://enemy.luau")
+local Boss = {
+	extends = Enemy,                 -- a required script, or a native class name
+	class_name = "Boss",
+	exports = { speed = 120.0, health = { type = "int", default = 500, range = { 0, 1000 } } },
+	properties = { phase = { type = "int", default = 1 } },
+	signals = { "enraged", hit = { "damage: int" } },
+}
+Boss.MAX_PHASE = 3
+
+function Boss:_ready()
+	self.hit:connect(function(damage) self:take(damage) end)  -- a Lua function as a Callable
+end
+function Boss:take(damage)
+	Enemy.take(self, damage)         -- the base version
+	if self.health < 100 then self.enraged:emit() end
+end
+return Boss
 ```
 
 ## Design
@@ -150,5 +184,5 @@ Missing features are tracked one per file in [`todo/`](todo/README.md).
   arguments are unaffected.
 - **Luau numbers are doubles.** Integers beyond 2^53 lose precision (same as
   LuaJIT).
-- **No exports, signals, script inheritance, tool scripts, editor features or
-  debugging.** One Luau state, main thread only.
+- **No await/coroutines, static functions, RPC, editor features or
+  debugging yet.** One Luau state, main thread only.

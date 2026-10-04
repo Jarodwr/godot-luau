@@ -1130,6 +1130,37 @@ static int variant_operator(lua_State *L) {
 	return 1;
 }
 
+// callable(...) for engine Callables (method Callables, bound ones…)
+static int variant_call_metamethod(lua_State *L) {
+	Variant *self = (Variant *)lua_touserdatatagged(L, 1, TAG_VARIANT);
+	if (type_of(*self) != Variant::CALLABLE) {
+		luaL_error(L, "attempt to call a %s value", "Godot");
+	}
+	static const StringName call_name("call");
+	int argc = lua_gettop(L) - 1;
+	if (argc > MAX_VARIANT_ARGS) {
+		luaL_error(L, "too many arguments");
+	}
+	bool ok;
+	{
+		VariantResult result;
+		GDExtensionCallError error;
+		call_with_vector_retry(L, 2, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
+			gdextension_interface::variant_call(self->_native_ptr(), call_name._native_ptr(), args.pointers(), argc, r.uninitialized(), &e);
+		});
+		ok = error.error == GDEXTENSION_CALL_OK;
+		if (ok) {
+			push_result(L, result);
+		} else {
+			lua_pushfstring(L, "invalid Callable call (error %d)", (int)error.error);
+		}
+	}
+	if (!ok) {
+		lua_error(L);
+	}
+	return 1;
+}
+
 static int variant_tostring(lua_State *L) {
 	push_string(L, to_variant(L, 1).stringify());
 	return 1;
@@ -1316,6 +1347,12 @@ void push_variant(lua_State *L, const Variant &value) {
 			push_object(L, object);
 			break;
 		}
+		case Variant::CALLABLE:
+			// Callables made from Lua functions are those functions again
+			if (!push_lua_function_of(L, value)) {
+				push_variant_userdata(L, value);
+			}
+			break;
 		default:
 			push_variant_userdata(L, value);
 			break;
@@ -1341,6 +1378,8 @@ Variant to_variant(lua_State *L, int index) {
 			s->~String();
 			return value;
 		}
+		case LUA_TFUNCTION:
+			return lua_function_to_callable(L, index);
 		case LUA_TLIGHTUSERDATA: {
 			alignas(Variant) unsigned char bytes[sizeof(Variant)] = {};
 			if (packed_tag(L, index) && write_plain_variant(L, index, bytes)) {
@@ -1477,6 +1516,8 @@ void register_globals(lua_State *L) {
 	lua_pushcfunction(L, variant_namecall, "__namecall");
 	lua_setfield(L, -2, "__namecall");
 	set_operator_metamethods(L, -1);
+	lua_pushcfunction(L, variant_call_metamethod, "__call");
+	lua_setfield(L, -2, "__call");
 	lua_pushcfunction(L, variant_tostring, "__tostring");
 	lua_setfield(L, -2, "__tostring");
 	lua_setuserdatametatable(L, TAG_VARIANT);
@@ -1550,6 +1591,10 @@ bool load_chunk(lua_State *L, const String &source, const String &chunkname) {
 static const char *PRELUDE = R"(
 package = { preload = {}, loaded = {}, path = "", config = "/\n;\n?\n!\n-\n", searchers = {} }
 function require(name)
+	-- res:// paths: a Luau or Fennel script's class table (for `extends`)
+	if type(name) == "string" and string.sub(name, 1, 6) == "res://" then
+		return __require_script(name)
+	end
 	local loaded = package.loaded[name]
 	if loaded ~= nil then return loaded end
 	local loader = package.preload[name]
@@ -1627,7 +1672,38 @@ void open_state() {
 	lua_setsafeenv(L_main, LUA_GLOBALSINDEX, true);
 }
 
+static uint64_t generation = 1;
+
+uint64_t state_generation() {
+	return generation;
+}
+
+Variant coerce_to_type(const Variant &value, Variant::Type type) {
+	Variant::Type have = value.get_type();
+	if (type == Variant::NIL || have == type || have == Variant::NIL) {
+		return value;
+	}
+	if (have == Variant::INT && type == Variant::FLOAT) {
+		return (double)(int64_t)value;
+	}
+	if (have == Variant::FLOAT && type == Variant::INT) {
+		return (int64_t)(double)value;
+	}
+	if (have == Variant::VECTOR2 && type == Variant::VECTOR3) {
+		Vector2 v = value;
+		return Vector3(v.x, v.y, 0);
+	}
+	// Anything else: Godot's own conversion constructor, when there is one
+	Variant result;
+	const Variant *args[] = { &value };
+	GDExtensionCallError error;
+	result.~Variant();
+	gdextension_interface::variant_construct((GDExtensionVariantType)type, result._native_ptr(), (const GDExtensionConstVariantPtr *)args, 1, &error);
+	return error.error == GDEXTENSION_CALL_OK ? result : value;
+}
+
 void close_state() {
+	generation++;
 	clear_builtins();
 	name_strings.clear();
 	node_paths.clear();

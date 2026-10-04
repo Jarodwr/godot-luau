@@ -191,6 +191,19 @@ void call_with_vector_retry(lua_State *L, int first, int argc, VariantResult &re
 	}
 }
 
+// Changes whenever the Luau state is closed: callables and other holders of
+// registry references check it before touching the state
+uint64_t state_generation();
+
+// Lua functions as Godot Callables (callable.cpp, docs/adr/0033)
+Variant lua_function_to_callable(lua_State *L, int index);
+// If `value` is a Callable made from a Lua function, pushes that function
+bool push_lua_function_of(lua_State *L, const Variant &value);
+
+// `value` converted to `type` where Lua's representation lost it (whole
+// floats read as ints, Vector3 with z = 0 read as Vector2); NIL: unchanged
+Variant coerce_to_type(const Variant &value, Variant::Type type);
+
 StringName string_name_at(lua_State *L, int index);
 void push_string(lua_State *L, const String &s);
 void construct_string(lua_State *L, int index, void *memory);

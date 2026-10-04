@@ -5,6 +5,9 @@
 #include <godot_cpp/classes/script_extension.hpp>
 #include <godot_cpp/classes/script_language_extension.hpp>
 #include <godot_cpp/templates/hash_map.hpp>
+#include <godot_cpp/templates/hash_set.hpp>
+#include <godot_cpp/templates/vector.hpp>
+#include <godot_cpp/variant/typed_array.hpp>
 #include <lua.h>
 
 #include <vector>
@@ -29,18 +32,70 @@ public:
 	String source;
 	bool valid = false;
 	StringName base_type = "RefCounted";
-	int class_ref = LUA_NOREF;          // the table the script returned
-	HashMap<StringName, int> methods;   // name → function ref
-	// Same, keyed by the StringName's interned data pointer: no string hashing
-	// per call (docs/adr/0003). `methods` keeps the names alive.
-	HashMap<const void *, int> methods_by_ptr;
+	Ref<LuauScript> base_script;   // `extends = require("res://…")`
+	StringName global_name;        // `class_name`
+	bool tool = false;
+	String icon_path;
+	int class_ref = LUA_NOREF;     // the table the script returned
+
+	// ---- Declarations, read once when the script loads (docs/adr/0032)
+	struct PropertyDef {
+		StringName name;
+		Variant::Type type = Variant::NIL;  // NIL: any
+		StringName class_name;              // for object types
+		PropertyHint hint = PROPERTY_HINT_NONE;
+		String hint_string;
+		Variant default_value;
+		bool has_default = false;
+		bool exported = false;              // shown in the inspector and saved
+		StringName getter, setter;          // script methods; empty: a plain field
+		bool has_accessors() const { return !getter.is_empty() || !setter.is_empty(); }
+	};
+	struct SignalDef {
+		StringName name;
+		Vector<StringName> args;
+		Vector<Variant::Type> arg_types;
+	};
+	struct MethodDef {
+		StringName name;
+		int ref = LUA_NOREF;
+		int nparams = 0;  // without self
+		bool vararg = false;
+		Array defaults;   // for the rightmost parameters
+		int defaults_ref = LUA_NOREF;  // the same, as a Lua sequence
+		Variant::Type ret_type = Variant::NIL;
+		bool has_ret_type = false;
+		Vector<Variant::Type> arg_types;
+	};
+	Vector<PropertyDef> properties;  // inspector order
+	HashMap<StringName, int> property_index;
+	Vector<SignalDef> signals;
+	HashMap<StringName, int> signal_index;
+	HashMap<StringName, MethodDef> methods;
+	// Methods by the StringName's interned data pointer: no string hashing per
+	// call (docs/adr/0003)
+	HashMap<const void *, const MethodDef *> methods_by_ptr;
+	Dictionary constants;
+	// Which Object overrides the script defines
+	// The overrides, if the script defines them (pointers into methods)
+	const MethodDef *get_method = nullptr, *set_method = nullptr, *notification_method = nullptr;
+
+	const PropertyDef *find_property(const StringName &name) const {
+		const int *index = property_index.getptr(name);
+		return index ? &properties[*index] : nullptr;
+	}
+	const SignalDef *find_signal(const StringName &name) const {
+		const int *index = signal_index.getptr(name);
+		return index ? &signals[*index] : nullptr;
+	}
 
 	// What a name missing from a self table resolves to, per owner class and
 	// name atom (docs/adr/0005). Filled on first use, emptied on reload.
-	enum RouteKind : uint8_t { ROUTE_UNRESOLVED, ROUTE_SCRIPT, ROUTE_ENGINE };
+	enum RouteKind : uint8_t { ROUTE_UNRESOLVED, ROUTE_SCRIPT, ROUTE_PROPERTY, ROUTE_SIGNAL, ROUTE_ENGINE };
 	struct Route {
 		RouteKind kind = ROUTE_UNRESOLVED;
-		const Member *member = nullptr;  // ROUTE_ENGINE
+		const Member *member = nullptr;        // ROUTE_ENGINE
+		const PropertyDef *property = nullptr; // ROUTE_PROPERTY (accessors)
 	};
 	struct Routes {
 		std::vector<Route> by_atom;
@@ -49,45 +104,53 @@ public:
 	Routes *routes_for(const void *class_info);
 
 	static const void *name_ptr(const StringName &name) { return *reinterpret_cast<const void *const *>(name._native_ptr()); }
-	const int *find_method(const StringName &name) const { return methods_by_ptr.getptr(name_ptr(name)); }
+	const MethodDef *find_method(const StringName &name) const {
+		const MethodDef *const *method = methods_by_ptr.getptr(name_ptr(name));
+		return method ? *method : nullptr;
+	}
+
+	// Inspector placeholders of this script (editor, non-tool scripts)
+	HashSet<void *> placeholders;
+	void update_placeholders();
+	TypedArray<Dictionary> property_list() const;
 
 	~LuauScript();
 
 	bool _editor_can_reload_from_file() override { return true; }
-	void _placeholder_erased(void *) override {}
-	bool _can_instantiate() const override { return valid; }
-	Ref<Script> _get_base_script() const override { return {}; }
-	StringName _get_global_name() const override { return {}; }
-	bool _inherits_script(const Ref<Script> &) const override { return false; }
+	void _placeholder_erased(void *p_placeholder) override { placeholders.erase(p_placeholder); }
+	bool _can_instantiate() const override;
+	Ref<Script> _get_base_script() const override { return base_script; }
+	StringName _get_global_name() const override { return global_name; }
+	bool _inherits_script(const Ref<Script> &p_script) const override;
 	StringName _get_instance_base_type() const override { return base_type; }
 	void *_instance_create(Object *p_for_object) const override;
-	void *_placeholder_instance_create(Object *) const override { return nullptr; }
-	bool _instance_has(Object *) const override { return false; }
+	void *_placeholder_instance_create(Object *p_for_object) const override;
+	bool _instance_has(Object *p_object) const override;
 	bool _has_source_code() const override { return true; }
 	String _get_source_code() const override { return source; }
 	void _set_source_code(const String &p_code) override { source = p_code; }
 	Error _reload(bool p_keep_state) override;
-	StringName _get_doc_class_name() const override { return {}; }
+	StringName _get_doc_class_name() const override { return global_name; }
 	TypedArray<Dictionary> _get_documentation() const override { return {}; }
-	String _get_class_icon_path() const override { return {}; }
+	String _get_class_icon_path() const override { return icon_path; }
 	bool _has_method(const StringName &p_method) const override { return find_method(p_method) != nullptr; }
 	bool _has_static_method(const StringName &) const override { return false; }
-	Variant _get_script_method_argument_count(const StringName &) const override { return {}; }
-	Dictionary _get_method_info(const StringName &) const override { return {}; }
-	bool _is_tool() const override { return false; }
+	Variant _get_script_method_argument_count(const StringName &p_method) const override;
+	Dictionary _get_method_info(const StringName &p_method) const override;
+	bool _is_tool() const override { return tool; }
 	bool _is_valid() const override { return valid; }
 	bool _is_abstract() const override { return false; }
 	ScriptLanguage *_get_language() const override;
-	bool _has_script_signal(const StringName &) const override { return false; }
-	TypedArray<Dictionary> _get_script_signal_list() const override { return {}; }
-	bool _has_property_default_value(const StringName &) const override { return false; }
-	Variant _get_property_default_value(const StringName &) const override { return {}; }
-	void _update_exports() override {}
-	TypedArray<Dictionary> _get_script_method_list() const override { return {}; }
-	TypedArray<Dictionary> _get_script_property_list() const override { return {}; }
+	bool _has_script_signal(const StringName &p_signal) const override { return find_signal(p_signal) != nullptr; }
+	TypedArray<Dictionary> _get_script_signal_list() const override;
+	bool _has_property_default_value(const StringName &p_property) const override;
+	Variant _get_property_default_value(const StringName &p_property) const override;
+	void _update_exports() override { update_placeholders(); }
+	TypedArray<Dictionary> _get_script_method_list() const override;
+	TypedArray<Dictionary> _get_script_property_list() const override { return property_list(); }
 	int32_t _get_member_line(const StringName &) const override { return -1; }
-	Dictionary _get_constants() const override { return {}; }
-	TypedArray<StringName> _get_members() const override { return {}; }
+	Dictionary _get_constants() const override { return constants; }
+	TypedArray<StringName> _get_members() const override;
 	bool _is_placeholder_fallback_enabled() const override { return false; }
 	Variant _get_rpc_config() const override { return {}; }
 
@@ -163,8 +226,8 @@ public:
 	void _profiling_stop() override {}
 	void _profiling_set_save_native_calls(bool) override {}
 	void _frame() override {}
-	bool _handles_global_class_type(const String &) const override { return false; }
-	Dictionary _get_global_class_name(const String &) const override { return {}; }
+	bool _handles_global_class_type(const String &p_type) const override { return p_type == "LuauScript"; }
+	Dictionary _get_global_class_name(const String &p_path) const override;
 
 protected:
 	static void _bind_methods() {}

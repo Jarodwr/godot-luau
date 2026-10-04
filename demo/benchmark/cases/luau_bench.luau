@@ -3,10 +3,7 @@
 local Bench = {
 	extends = "Node2D",
 
-	-- Provisional declarations for features godot-luau doesn't have yet
-	-- (todo/exports.md, signals.md, …). Their final form is decided when each
-	-- feature is built; until then godot-luau ignores them and the cases that
-	-- need them report UNSUPPORTED.
+	-- Script declarations (docs/adr/0032-script-declarations.md)
 	exports = {
 		speed = { type = "float", default = 2.0 },
 	},
@@ -26,8 +23,7 @@ local Bench = {
 	},
 }
 
--- A constant is a plain field on the class table (registering it with Godot
--- is part of todo/static-methods-and-constants.md)
+-- A constant is an UPPERCASE field on the class table
 Bench.MAX_HEALTH = 100
 
 local function fib(n)
@@ -37,6 +33,10 @@ end
 
 local function add(a, b)
 	return a + b
+end
+
+function Bench:_ready()
+	self.ticked:connect(Callable(self, "on_ticked"))
 end
 
 function Bench:helper(x) return x + 1 end

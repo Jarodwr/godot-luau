@@ -3,23 +3,20 @@
 Features godot-luau needs for parity with GDScript and fennel-gdextension.
 One file per feature; delete it once the feature is done and confirmed.
 
-Performance work comes first: see the proposed ADRs (0015 onwards) in
-[`docs/adr/`](../docs/adr/README.md). The benchmark reports `UNSUPPORTED` for
-cases that need a missing feature, so it doubles as a parity check.
+The benchmark reports `UNSUPPORTED` for cases that need a missing feature, so
+it doubles as a parity check.
 
 ## Script features
 
-- [Exported script properties](exports.md)
-- [Signals](signals.md)
-- [Callables from Lua functions](callables.md)
+Done: exports and properties, signals, Lua functions as Callables, script
+inheritance, default arguments, typed members, constants, `_get`/`_set`/
+`_notification` ([ADRs 0032–0034](../docs/adr/README.md)).
+
 - [await / coroutines](await-and-coroutines.md)
-- [Script inheritance](script-inheritance.md)
 - [class_name / global classes](global-classes.md)
 - [Tool scripts](tool-scripts.md)
-- [Object overrides (_notification, _get, _set, _get_property_list)](object-overrides.md)
-- [Static methods and script constants](static-methods-and-constants.md)
-- [Default arguments for methods called from Godot](default-arguments.md)
-- [Typed methods and properties](typed-members.md)
+- [Object overrides (_get_property_list, _validate_property, _to_string)](object-overrides.md)
+- [Static methods](static-methods-and-constants.md)
 - [RPC configuration](rpc.md)
 
 ## API surface

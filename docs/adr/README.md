@@ -55,3 +55,6 @@ at the same optimisation level.
 | [0029](0029-builtin-method-pointers.md) | Cached method pointers for builtin values | Accepted |
 | [0030](0030-packed-vector2i-and-rid.md) | Vector2i and RID as packed light userdata; direct constructors | Accepted |
 | [0031](0031-elementwise-arithmetic-and-gc-tuning.md) | Elementwise arithmetic in C; garbage collector settings unchanged | Accepted |
+| [0032](0032-script-declarations.md) | Script features are declared in the class table | Accepted |
+| [0033](0033-lua-functions-as-callables.md) | Lua functions are Godot Callables | Accepted |
+| [0034](0034-script-inheritance-and-shutdown.md) | Script inheritance through required class tables; Lua closes with the main loop | Accepted |

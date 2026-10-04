@@ -1,14 +1,17 @@
-# Static methods and script constants
+# Static methods
 
 **Area:** Script features
 
 ## What
 
-Script-level constants and enums visible to other scripts and the editor, and static functions.
+Static functions callable on the script (`preload("x.luau").make()`), and
+reading constants the same way. Constants are done for Lua (`self.MAX`) and
+`get_script_constant_map` ([ADR 0032](../docs/adr/0032-script-declarations.md)).
 
 ## Approach
 
-`_get_constants`, `_has_static_method`, `_get_members`.
+A declaration such as `static = { "make" }` (functions called without
+`self`), `_has_static_method`, and the script's `call` for static methods.
 
 ## Done when
 
@@ -16,9 +19,3 @@ GDScript can read a Luau script's constant and call its static function.
 
 Check the benchmark afterwards (`tools/bench.sh`): a feature shouldn't slow existing cases.
 
-## Benchmark cases
-
-- `api_script_constant`
-
-GDScript and godot-luau-script numbers for these are in
-[`docs/comparisons/godot-luau-script.md`](../docs/comparisons/godot-luau-script.md#feature-cases).

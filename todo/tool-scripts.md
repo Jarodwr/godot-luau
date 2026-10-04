@@ -6,9 +6,12 @@
 
 Scripts that run in the editor (`tool = true`).
 
-## Approach
+## Status
 
-`_is_tool`, placeholder instances for non-tool scripts in the editor, reloading running tool scripts.
+`tool = true` in the class table, `_can_instantiate` and placeholder instances
+for non-tool scripts in the editor are implemented
+([ADR 0032](../docs/adr/0032-script-declarations.md)). Not yet checked in the
+editor; reloading running tool scripts is part of hot reload.
 
 ## Done when
 
