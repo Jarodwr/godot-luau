@@ -17,6 +17,7 @@ static void initialize(ModuleInitializationLevel level) {
 	GDREGISTER_CLASS(luau::LuauScript);
 	GDREGISTER_CLASS(luau::LuauLanguage);
 	GDREGISTER_CLASS(luau::LuauLoader);
+	GDREGISTER_INTERNAL_CLASS(luau::LuauCompletion);
 	language = memnew(luau::LuauLanguage);
 	Engine::get_singleton()->register_script_language(language);
 	loader.instantiate();

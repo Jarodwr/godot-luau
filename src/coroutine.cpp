@@ -13,6 +13,7 @@
 // A thread that suspends any other way (coroutine.yield) is an error and goes
 // back at once.
 #include "internal.h"
+#include "script.h"
 
 #include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/core/object.hpp>
@@ -157,13 +158,7 @@ int run_thread(Coroutine *co, int nargs) {
 
 Variant completion_signal(Coroutine *co) {
 	if (co->completion == 0) {
-		Object *object = memnew(Object);
-		Dictionary arg;
-		arg["name"] = "result";
-		Array args;
-		args.push_back(arg);
-		object->add_user_signal("completed", args);
-		co->completion = object->get_instance_id();
+		co->completion = memnew(LuauCompletion)->get_instance_id();
 	}
 	return Signal(ObjectDB::get_instance(co->completion), "completed");
 }

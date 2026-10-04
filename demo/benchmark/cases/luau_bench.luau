@@ -233,6 +233,21 @@ function Bench:await_once()
 	self.awaited += 1
 end
 
+-- For await_from_gdscript: suspends, then returns a value
+function Bench:wait_idle()
+	await(self.idle)
+	return 1
+end
+
+local function spawned(self) self.spawned += 1 end
+
+-- spawn a function that finishes without awaiting
+function Bench:bench_api_spawn(n)
+	self.spawned = 0
+	for i = 1, n do spawn(spawned, self) end
+	return self.spawned
+end
+
 -- Start a coroutine that waits for a signal, then emit it
 function Bench:bench_api_await_signal(n)
 	self.awaited = 0

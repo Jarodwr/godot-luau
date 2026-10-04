@@ -234,6 +234,18 @@ protected:
 	static void _bind_methods() {}
 };
 
+// What a call from Godot that suspended in await returns: Signal(this,
+// "completed"), emitted with the call's result (docs/adr/0038). A class with
+// a declared signal: cheaper to make than an Object with a user signal.
+class LuauCompletion : public Object {
+	GDCLASS(LuauCompletion, Object);
+
+protected:
+	static void _bind_methods() {
+		ADD_SIGNAL(::godot::MethodInfo("completed", ::godot::PropertyInfo(Variant::NIL, "result", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NIL_IS_VARIANT)));
+	}
+};
+
 class LuauLoader : public ResourceFormatLoader {
 	GDCLASS(LuauLoader, ResourceFormatLoader);
 

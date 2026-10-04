@@ -56,6 +56,7 @@ const CASES := [
 	{"name": "api_self_method", "kind": "inner", "n": 100000, "group": "api", "desc": "call own exposed method via self (through Godot for Fennel)"},
 	{"name": "api_callable_call", "kind": "inner", "n": 100000, "group": "api", "desc": "call a closure wrapped in a Callable"},
 	{"name": "api_async_method_call", "kind": "inner", "n": 50000, "group": "api", "desc": "call an async-method that doesn't await (GDScript: plain call)"},
+	{"name": "api_spawn", "kind": "inner", "n": 100000, "group": "api", "desc": "spawn a function that returns without awaiting (GDScript: plain call)"},
 	{"name": "api_await_signal", "kind": "inner", "n": 20000, "group": "api", "desc": "start a coroutine that awaits a signal, then emit it"},
 
 	# Godot → script: the harness loop calls into the script object
@@ -75,6 +76,7 @@ const CASES := [
 	{"name": "prop_get_export", "kind": "boundary", "n": 200000, "group": "boundary", "desc": "read obj.speed (exported property)"},
 	{"name": "prop_set_export", "kind": "boundary", "n": 200000, "group": "boundary", "desc": "write obj.speed (exported property)"},
 	{"name": "callable_from_script", "kind": "boundary", "n": 200000, "group": "boundary", "desc": "call a Callable the script returned"},
+	{"name": "await_from_gdscript", "kind": "boundary", "n": 20000, "group": "boundary", "desc": "GDScript awaits a script method that suspends and returns a value"},
 	{"name": "signal_into_script", "kind": "boundary", "n": 100000, "group": "boundary", "desc": "emit a GDScript signal connected to a script method"},
 	{"name": "new_instance", "kind": "boundary", "n": 20000, "group": "boundary", "desc": "script.new() + free() of a Node2D script"},
 
@@ -499,6 +501,20 @@ func b_callable_from_script(o: Object, n: int) -> Variant:
 	for i in n:
 		s += cb.call(i)
 	return s
+
+
+var awaited_total := 0
+
+func _await_script(o: Object) -> void:
+	awaited_total += await o.wait_idle()
+
+
+func b_await_from_gdscript(o: Object, n: int) -> Variant:
+	awaited_total = 0
+	for i in n:
+		_await_script(o)
+		o.idle.emit()
+	return awaited_total
 
 
 func b_signal_into_script(o: Object, n: int) -> Variant:

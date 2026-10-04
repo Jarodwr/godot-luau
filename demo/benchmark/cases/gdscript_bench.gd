@@ -291,6 +291,26 @@ func await_once() -> void:
 	awaited += 1
 
 
+# For await_from_gdscript: suspends, then returns a value
+func wait_idle() -> int:
+	await idle
+	return 1
+
+
+var spawned := 0
+
+func spawned_fn() -> void:
+	spawned += 1
+
+
+# GDScript has no spawn: calling a function is the equivalent
+func bench_api_spawn(n: int) -> int:
+	spawned = 0
+	for i in range(n):
+		spawned_fn()
+	return spawned
+
+
 # Start a coroutine that waits for a signal, then emit it
 func bench_api_await_signal(n: int) -> int:
 	awaited = 0
