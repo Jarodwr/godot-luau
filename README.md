@@ -147,6 +147,16 @@ end
 return Boss
 ```
 
+`require` loads `.luau` and `.fnl` files by path (`res://lib/util`,
+`./util`, `../util`) or dotted name (`lib.util`). Saving a script while the
+game runs reloads it in place: instances keep their fields, and scripts that
+required it reload too
+([0036](docs/adr/0036-modules-and-hot-reload.md)). Hot reload is tested with:
+
+```sh
+cd demo && "$GODOT_BIN" --headless --path . --script hot_reload.gd
+```
+
 ## Design
 
 ### `src/api.cpp`: bindings and values

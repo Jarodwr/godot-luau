@@ -11,7 +11,8 @@ it doubles as a parity check.
 Done: exports and properties, signals, Lua functions as Callables, script
 inheritance, default arguments, typed members, constants, `_get`/`_set`/
 `_notification` ([ADRs 0032–0034](../docs/adr/README.md)); `await` and `spawn`
-([ADR 0035](../docs/adr/0035-await-on-pooled-threads.md)).
+([ADR 0035](../docs/adr/0035-await-on-pooled-threads.md)); modules and hot
+reload ([ADR 0036](../docs/adr/0036-modules-and-hot-reload.md)).
 
 - [Awaiting Luau methods from GDScript](await-from-gdscript.md)
 - [class_name / global classes](global-classes.md)
@@ -31,11 +32,9 @@ inheritance, default arguments, typed members, constants, `_get`/`_set`/
 - [Editor: templates and syntax highlighting](editor-templates-and-highlighting.md)
 - [Editor: code completion](code-completion.md)
 - [Debugger and profiler integration](debugger.md)
-- [Hot reload](hot-reload.md)
 - [Fennel tooling parity](fennel-tooling.md)
 
 ## Runtime
 
 - [Threads](threads.md)
-- [Modules (require)](modules.md)
 - [Error messages and stack traces](error-messages.md)

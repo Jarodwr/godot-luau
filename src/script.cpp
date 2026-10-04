@@ -5,6 +5,8 @@
 
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/os.hpp>
+#include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/godot.hpp>
@@ -14,6 +16,8 @@
 #include <lualib.h>
 
 #include <algorithm>
+#include <chrono>
+#include <ctime>
 #include <vector>
 
 namespace luau {
@@ -23,22 +27,111 @@ LuauLanguage *LuauLanguage::singleton = nullptr;
 // Scripts by their class table, for `extends = require("res://…")`
 static HashMap<const void *, LuauScript *> scripts_by_class;
 
+// ---------------------------------------------------------------- modules
+// (docs/adr/0036)
+
 // Scripts loaded through require: kept loaded while the Luau state lives, as
 // package.loaded keeps modules (a script used as a base must outlive the
 // require call)
 static HashMap<String, Ref<LuauScript>> required_scripts;
+// Loaded scripts by path, for reloading dependents and the file watcher
+static HashMap<String, LuauScript *> scripts_by_path;
+// Scripts whose chunk required a path while it ran: reloaded after it
+static HashMap<String, HashSet<String>> dependents;
+// Scripts whose chunk is running now (nested by require)
+static std::vector<LuauScript *> loading;
+// Scripts being reloaded now (with their dependents)
+static HashSet<String> reloading_paths;
 
-// require("res://…") of a script: its class table (registered as
-// __require_script, used by the prelude's require)
-static int require_script(lua_State *L) {
-	String path = String::utf8(luaL_checkstring(L, 1));
-	Ref<LuauScript> script = ResourceLoader::get_singleton()->load(path);
-	if (script.is_null() || !script->valid) {
-		luaL_error(L, "can't load script '%s'", lua_tostring(L, 1));
+// A module name to a file: "res://a/b", "./b" or "../b" (relative to the
+// requiring file), or "a.b" (from res://). The extension may be left out.
+static String resolve_module(lua_State *L, const String &name) {
+	String base;
+	if (name.begins_with("res://")) {
+		base = name;
+	} else if (name.begins_with("./") || name.begins_with("../")) {
+		lua_Debug ar;
+		String from;
+		if (lua_getinfo(L, 1, "s", &ar) && ar.source[0] == '@') {
+			from = String::utf8(ar.source + 1);
+		}
+		if (!from.begins_with("res://")) {
+			return String();
+		}
+		base = from.get_base_dir().path_join(name).simplify_path();
+	} else {
+		base = "res://" + name.replace(".", "/");
+	}
+	String ext = base.get_extension();
+	if ((ext == "luau" || ext == "fnl") && FileAccess::file_exists(base)) {
+		return base;
+	}
+	for (const char *candidate : { ".luau", ".fnl" }) {
+		if (FileAccess::file_exists(base + candidate)) {
+			return base + candidate;
+		}
+	}
+	return String();
+}
+
+// The value a module file returned, loading it (as a script resource) once
+static int load_module(lua_State *L, const String &path) {
+	for (size_t i = 0; i < loading.size(); i++) {
+		if (loading[i]->get_path() == path) {
+			String cycle;
+			for (size_t j = i; j < loading.size(); j++) {
+				cycle += loading[j]->get_path() + " -> ";
+			}
+			luaL_error(L, "require cycle: %s", (cycle + path).utf8().get_data());
+		}
+	}
+	if (!loading.empty()) {
+		dependents[path].insert(loading.back()->get_path());
+	}
+	Ref<LuauScript> script;
+	if (Ref<LuauScript> *kept = required_scripts.getptr(path)) {
+		script = *kept;
+	} else {
+		script = ResourceLoader::get_singleton()->load(path);
+	}
+	if (script.is_null() || script->class_ref == LUA_NOREF) {
+		luaL_error(L, "can't load module '%s'", path.utf8().get_data());
 	}
 	required_scripts[path] = script;
 	lua_getref(L, script->class_ref);
 	return 1;
+}
+
+// require(name): Luau and Fennel files by path, else package.preload and
+// package.loaded (the prelude's require, for Fennel's own modules)
+static int lua_require(lua_State *L) {
+	String name = String::utf8(luaL_checkstring(L, 1));
+	bool is_path = name.begins_with("res://") || name.begins_with("./") || name.begins_with("../");
+	if (!is_path) {
+		// package.loaded, then package.preload (the prelude's require)
+		lua_getglobal(L, "package");
+		lua_getfield(L, -1, "loaded");
+		lua_pushvalue(L, 1);
+		lua_rawget(L, -2);
+		if (!lua_isnil(L, -1)) {
+			return 1;
+		}
+		lua_getfield(L, -3, "preload");
+		lua_pushvalue(L, 1);
+		lua_rawget(L, -2);
+		if (lua_isfunction(L, -1)) {
+			lua_getglobal(L, "__lua_require");
+			lua_pushvalue(L, 1);
+			lua_call(L, 1, 1);
+			return 1;
+		}
+		lua_settop(L, 1);
+	}
+	String path = resolve_module(L, name);
+	if (path.is_empty()) {
+		luaL_error(L, "module '%s' not found", lua_tostring(L, 1));
+	}
+	return load_module(L, path);
 }
 
 // Lua lets go of everything when the main loop is deleted. Godot finishes
@@ -50,6 +143,7 @@ static bool main_loop_gone = false;
 static void main_loop_freed(void *, void *, void *) {
 	main_loop_gone = true;
 	required_scripts.clear();
+	dependents.clear();
 	close_state();
 }
 
@@ -80,8 +174,11 @@ static void watch_main_loop() {
 static lua_State *ensure_state() {
 	if (state() == nullptr && !main_loop_gone) {
 		open_state();
-		lua_pushcfunction(state(), require_script, "__require_script");
-		lua_setglobal(state(), "__require_script");
+		lua_State *L = state();
+		lua_getglobal(L, "require");
+		lua_setglobal(L, "__lua_require");
+		lua_pushcfunction(L, lua_require, "require");
+		lua_setglobal(L, "require");
 	}
 	return state();
 }
@@ -1020,6 +1117,11 @@ LuauScript::~LuauScript() {
 	for (auto &[cls, table] : routes) {
 		delete table;
 	}
+	if (LuauScript **registered = scripts_by_path.getptr(get_path())) {
+		if (*registered == this) {
+			scripts_by_path.erase(get_path());
+		}
+	}
 	unregister_class_table(this);
 	lua_State *L = state();
 	if (L == nullptr) {
@@ -1066,11 +1168,160 @@ bool LuauScript::_inherits_script(const Ref<Script> &p_script) const {
 	return false;
 }
 
+// ---------------------------------------------------------------- reloading
+// (docs/adr/0036)
+
+// Moves the contents of the table at `from` (a module's new version) into
+// the one at `into` (the version everyone holds). `from` then forwards to
+// `into`, so the new code's own references to its table (`M.count += 1`
+// inside M's functions) read and write the same table as everyone else.
+static void merge_into(lua_State *L, int into, int from) {
+	bool frozen = lua_getreadonly(L, into);
+	lua_setreadonly(L, into, false);
+	// Fields the new version dropped
+	lua_pushnil(L);
+	while (lua_next(L, into)) {
+		lua_pop(L, 1);
+		lua_pushvalue(L, -1);
+		if (lua_rawget(L, from) == LUA_TNIL) {
+			lua_pushvalue(L, -2);
+			lua_pushnil(L);
+			lua_rawset(L, into);  // allowed while traversing: the key exists
+		}
+		lua_pop(L, 1);
+	}
+	lua_pushnil(L);
+	while (lua_next(L, from)) {
+		lua_pushvalue(L, -2);
+		lua_insert(L, -2);
+		lua_rawset(L, into);
+	}
+	if (lua_getmetatable(L, from)) {
+		lua_setmetatable(L, into);
+	} else {
+		lua_pushnil(L);
+		lua_setmetatable(L, into);
+	}
+	lua_setreadonly(L, into, frozen || lua_getreadonly(L, from));
+	lua_setreadonly(L, from, false);
+	lua_cleartable(L, from);
+	lua_createtable(L, 0, 2);
+	lua_pushvalue(L, into);
+	lua_setfield(L, -2, "__index");
+	lua_pushvalue(L, into);
+	lua_setfield(L, -2, "__newindex");
+	lua_setmetatable(L, from);
+}
+
+// Live instances of a reloaded script keep their fields. Their caches of
+// script functions are emptied, and properties the new version added get
+// their defaults.
+static void refresh_instances(lua_State *L, LuauScript *script) {
+	for (const KeyValue<GDExtensionObjectPtr, Instance *> &E : instances) {
+		Instance *instance = E.value;
+		if (instance->script.ptr() != script) {
+			continue;
+		}
+		lua_getref(L, instance->cache_ref);
+		lua_cleartable(L, -1);
+		lua_pop(L, 1);
+		lua_getref(L, instance->table_ref);
+		for (const LuauScript::PropertyDef &property : script->properties) {
+			if (property.has_accessors() || property.default_value.get_type() == Variant::NIL) {
+				continue;
+			}
+			push_string_name(L, property.name);
+			if (lua_rawget(L, -2) == LUA_TNIL) {
+				push_string_name(L, property.name);
+				push_variant(L, property.default_value);
+				lua_rawset(L, -4);
+			}
+			lua_pop(L, 1);
+		}
+		lua_pop(L, 1);
+	}
+}
+
+// Scripts that required `path` ran with its old version: run them again
+static void reload_dependents(const String &path) {
+	HashSet<String> *users = dependents.getptr(path);
+	if (users == nullptr) {
+		return;
+	}
+	Vector<String> list;
+	for (const String &user : *users) {
+		list.push_back(user);
+	}
+	for (const String &user : list) {
+		if (LuauScript **script = scripts_by_path.getptr(user)) {
+			(*script)->_reload(true);
+		}
+	}
+}
+
 Error LuauScript::_reload(bool p_keep_state) {
 	lua_State *L = ensure_state();
 	if (L == nullptr) {
 		return ERR_UNAVAILABLE;
 	}
+	String path = get_path();
+	if (reloading_paths.has(path)) {
+		return OK;  // already reloading higher up (dependents of dependents)
+	}
+	if (path.begins_with("res://")) {
+		scripts_by_path[path] = this;  // watched even if this load fails
+	}
+
+	// Run the new code first: if it fails, the loaded version stays
+	String code = source;
+	if (path.get_extension() == "fnl") {
+		String lua;
+		if (!compile_fennel(L, source, path, lua)) {
+			UtilityFunctions::push_error(lua);
+			return ERR_PARSE_ERROR;
+		}
+		code = lua;
+	}
+	loading.push_back(this);
+	bool ran = load_chunk(L, code, "@" + path) && lua_pcall(L, 0, 1, 0) == LUA_OK;
+	loading.pop_back();
+	if (!ran) {
+		UtilityFunctions::push_error(String::utf8(lua_tostring(L, -1)));
+		lua_pop(L, 1);
+		return ERR_PARSE_ERROR;
+	}
+	bool reload = class_ref != LUA_NOREF;
+	reloading_paths.insert(path);
+
+	// A module that isn't a table (a function, a value): only require uses it
+	if (!lua_istable(L, -1)) {
+		if (class_ref != LUA_NOREF) {
+			unregister_class_table(this);
+			lua_unref(L, class_ref);
+		}
+		class_ref = lua_ref(L, -1);
+		lua_pop(L, 1);
+		valid = false;
+		if (reload) {
+			reload_dependents(path);
+		}
+		reloading_paths.erase(path);
+		return OK;
+	}
+
+	// Reloading keeps the table everyone already holds (other modules'
+	// locals, derived scripts' `extends`): the new one's contents move into it
+	if (reload) {
+		lua_getref(L, class_ref);
+		if (lua_istable(L, -1)) {
+			merge_into(L, lua_gettop(L), lua_gettop(L) - 1);
+			lua_remove(L, -2);  // the old table takes the new one's place
+		} else {
+			lua_pop(L, 1);
+		}
+	}
+	int table = lua_gettop(L);
+
 	valid = false;
 	clear_methods(this, L);
 	properties.clear();
@@ -1085,27 +1336,6 @@ Error LuauScript::_reload(bool p_keep_state) {
 	for (auto &[cls, table] : routes) {
 		table->by_atom.clear();  // instances keep their pointers
 	}
-
-	String code = source;
-	if (get_path().get_extension() == "fnl") {
-		String lua;
-		if (!compile_fennel(L, source, get_path(), lua)) {
-			UtilityFunctions::push_error(lua);
-			return ERR_PARSE_ERROR;
-		}
-		code = lua;
-	}
-	if (!load_chunk(L, code, "@" + get_path()) || lua_pcall(L, 0, 1, 0) != LUA_OK) {
-		UtilityFunctions::push_error(String::utf8(lua_tostring(L, -1)));
-		lua_pop(L, 1);
-		return ERR_PARSE_ERROR;
-	}
-	if (!lua_istable(L, -1)) {
-		UtilityFunctions::push_error("Luau script must return a table: " + get_path());
-		lua_pop(L, 1);
-		return ERR_PARSE_ERROR;
-	}
-	int table = lua_gettop(L);
 
 	// extends: a native class name, or a script's class table
 	lua_rawgetfield(L, table, "extends");
@@ -1309,6 +1539,11 @@ Error LuauScript::_reload(bool p_keep_state) {
 	lua_settop(L, table - 1);
 	valid = true;
 	update_placeholders();
+	if (reload) {
+		refresh_instances(L, this);
+		reload_dependents(path);
+	}
+	reloading_paths.erase(path);
 	return OK;
 }
 
@@ -1452,7 +1687,91 @@ void LuauLanguage::_init() {
 
 void LuauLanguage::_finish() {
 	required_scripts.clear();
+	dependents.clear();
 	close_state();
+}
+
+// ---- Reloading from disk (docs/adr/0036)
+
+// Reads the script's file again and reloads it if the text changed
+static bool reload_from_disk(LuauScript *script) {
+	String path = script->get_path();
+	if (!path.begins_with("res://") || !FileAccess::file_exists(path)) {
+		return false;
+	}
+	script->source_mtime = FileAccess::get_modified_time(path);
+	String text = FileAccess::get_file_as_string(path);
+	if (text.is_empty() || text == script->source) {
+		return false;
+	}
+	script->source = text;
+	Error error = script->_reload(true);
+	UtilityFunctions::print_verbose("Luau: reloaded " + path + (error == OK ? "" : " (failed: the previous version stays)"));
+	return true;
+}
+
+void LuauLanguage::_reload_all_scripts() {
+	Vector<LuauScript *> scripts;
+	for (const KeyValue<String, LuauScript *> &E : scripts_by_path) {
+		scripts.push_back(E.value);
+	}
+	for (LuauScript *script : scripts) {
+		reload_from_disk(script);
+	}
+}
+
+void LuauLanguage::_reload_scripts(const Array &p_scripts, bool) {
+	for (int i = 0; i < p_scripts.size(); i++) {
+		Ref<LuauScript> script = p_scripts[i];
+		if (script.is_valid()) {
+			reload_from_disk(script.ptr());
+		}
+	}
+}
+
+void LuauLanguage::_reload_tool_script(const Ref<Script> &p_script, bool) {
+	Ref<LuauScript> script = p_script;
+	if (script.is_valid()) {
+		reload_from_disk(script.ptr());
+	}
+}
+
+// The file watcher: in a running game (debug builds, not the editor, which
+// reloads through the hooks above), loaded scripts are checked twice a
+// second and reloaded when their file changes. Modification times have
+// one-second resolution, so files changed in the last two seconds are
+// compared by content.
+static bool watching_files() {
+	static int enabled = -1;
+	if (enabled < 0) {
+		ProjectSettings *settings = ProjectSettings::get_singleton();
+		Variant setting = settings->get_setting("luau/hot_reload/watch_files", true);
+		enabled = (bool)setting && OS::get_singleton()->is_debug_build() && !Engine::get_singleton()->is_editor_hint();
+	}
+	return enabled == 1;
+}
+
+void LuauLanguage::_frame() {
+	if (!watching_files() || state() == nullptr) {
+		return;
+	}
+	static std::chrono::steady_clock::time_point next_poll;
+	auto now = std::chrono::steady_clock::now();
+	if (now < next_poll) {
+		return;
+	}
+	next_poll = now + std::chrono::milliseconds(500);
+	uint64_t wall = (uint64_t)std::time(nullptr);
+	Vector<LuauScript *> changed;
+	for (const KeyValue<String, LuauScript *> &E : scripts_by_path) {
+		uint64_t mtime = FileAccess::get_modified_time(E.key);
+		if (mtime != E.value->source_mtime || mtime + 2 >= wall) {
+			changed.push_back(E.value);
+		}
+	}
+	for (LuauScript *script : changed) {
+		reload_from_disk(script);
+	}
 }
 
 PackedStringArray LuauLanguage::_get_reserved_words() const {
@@ -1501,6 +1820,7 @@ Variant LuauLoader::_load(const String &p_path, const String &p_original_path, b
 	script.instantiate();
 	script->set_path(p_original_path.is_empty() ? p_path : p_original_path);
 	script->source = FileAccess::get_file_as_string(p_path);
+	script->source_mtime = FileAccess::get_modified_time(p_path);
 	script->_reload(false);
 	return script;
 }

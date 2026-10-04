@@ -1590,11 +1590,9 @@ bool load_chunk(lua_State *L, const String &source, const String &chunkname) {
 // What Fennel expects of a Lua environment that Luau leaves to the host
 static const char *PRELUDE = R"(
 package = { preload = {}, loaded = {}, path = "", config = "/\n;\n?\n!\n-\n", searchers = {} }
+-- Fennel's own modules. Scripts get godot-luau's require (script.cpp), which
+-- also loads files.
 function require(name)
-	-- res:// paths: a Luau or Fennel script's class table (for `extends`)
-	if type(name) == "string" and string.sub(name, 1, 6) == "res://" then
-		return __require_script(name)
-	end
 	local loaded = package.loaded[name]
 	if loaded ~= nil then return loaded end
 	local loader = package.preload[name]

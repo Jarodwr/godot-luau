@@ -2,3 +2,4 @@ build/
 addons/godot_luau/bin/
 .godot/
 *.log
+demo/hot_test/

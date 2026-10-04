@@ -59,3 +59,4 @@ at the same optimisation level.
 | [0033](0033-lua-functions-as-callables.md) | Lua functions are Godot Callables | Accepted |
 | [0034](0034-script-inheritance-and-shutdown.md) | Script inheritance through required class tables; Lua closes with the main loop | Accepted |
 | [0035](0035-await-on-pooled-threads.md) | await: calls from Godot run on pooled threads | Accepted |
+| [0036](0036-modules-and-hot-reload.md) | Modules by path, and hot reload that keeps tables and instances | Accepted |

@@ -30,6 +30,7 @@ class LuauScript : public ScriptExtension {
 
 public:
 	String source;
+	uint64_t source_mtime = 0;     // of the file `source` was read from
 	bool valid = false;
 	StringName base_type = "RefCounted";
 	Ref<LuauScript> base_script;   // `extends = require("res://…")`
@@ -215,9 +216,9 @@ public:
 	Dictionary _debug_get_globals(int32_t, int32_t) override { return {}; }
 	String _debug_parse_stack_level_expression(int32_t, const String &, int32_t, int32_t) override { return {}; }
 	TypedArray<Dictionary> _debug_get_current_stack_info() override { return {}; }
-	void _reload_all_scripts() override {}
-	void _reload_scripts(const Array &, bool) override {}
-	void _reload_tool_script(const Ref<Script> &, bool) override {}
+	void _reload_all_scripts() override;
+	void _reload_scripts(const Array &p_scripts, bool p_soft_reload) override;
+	void _reload_tool_script(const Ref<Script> &p_script, bool p_soft_reload) override;
 	PackedStringArray _get_recognized_extensions() const override { return PackedStringArray({ "luau", "fnl" }); }
 	TypedArray<Dictionary> _get_public_functions() const override { return {}; }
 	Dictionary _get_public_constants() const override { return {}; }
@@ -225,7 +226,7 @@ public:
 	void _profiling_start() override {}
 	void _profiling_stop() override {}
 	void _profiling_set_save_native_calls(bool) override {}
-	void _frame() override {}
+	void _frame() override;
 	bool _handles_global_class_type(const String &p_type) const override { return p_type == "LuauScript"; }
 	Dictionary _get_global_class_name(const String &p_path) const override;
 

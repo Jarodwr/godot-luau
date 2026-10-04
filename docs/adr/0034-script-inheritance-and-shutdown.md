@@ -27,7 +27,7 @@ script had already been cleared, and the process aborted in a mutex.
     `package.loaded`.
   - Any `res://` path goes through this, so a utility module loads as a
     script too and returns its table. Proper modules (caching, reload,
-    Fennel's searcher) are `todo/modules.md`.
+    Fennel's searcher) came in [0036](0036-modules-and-hot-reload.md).
 - `extends = Base` (that table) makes the script derive from it:
   - the base script and native base type come from the base;
   - the class table's metatable sends missing names to the base table, so
@@ -55,6 +55,6 @@ watched.
   isn't supported, and neither is extending by class name (`extends =
   "Player"`); see `todo/global-classes.md`.
 - **Hot reload of a base script** doesn't yet refresh scripts that derive from
-  it (`todo/hot-reload.md`).
+  it (done in [0036](0036-modules-and-hot-reload.md)).
 - **Shutdown:** Lua values can't be used once the main loop is gone, e.g. by
   objects freed later in shutdown; they're released already.
