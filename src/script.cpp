@@ -733,6 +733,9 @@ static GDExtensionBool refcount_decremented_func(Instance *) {
 static void free_func(Instance *instance) {
 	lua_State *L = state();
 	if (L) {
+		// Its methods suspended in await don't continue (as in GDScript),
+		// and let go of the self table now
+		cancel_coroutines_of(instance->owner_id);
 		// Lua may still hold the table: forget the instance
 		instance->handle->instance = nullptr;
 		lua_getref(L, instance->meta_ref);

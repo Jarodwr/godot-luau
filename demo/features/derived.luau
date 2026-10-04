@@ -114,6 +114,25 @@ function Features:spawn_two()
 	spawn(waiter)
 	self.spawned += 10  -- runs before either waiter resumes
 end
+-- Leak checks
+function Features:thread_stats() return __luau_thread_stats() end
+function Features:yield_wrongly() coroutine.yield() end
+function Features:burst(n)
+	for i = 1, n do
+		spawn(function() await(self.go) end)
+	end
+end
+function Features:churn(n)
+	for i = 1, n do
+		spawn(function()
+			local t = { i, tostring(i) }  -- something for the stack to hold
+			await(self.go)
+			return t
+		end)
+		self.go:emit()
+	end
+end
+function Features:wait_forever(signal) await(signal); self.never = true end
 function Features:await_plain() return await(5) end
 function Features:get_awaiting() return await(self.go) end
 function Features:state()

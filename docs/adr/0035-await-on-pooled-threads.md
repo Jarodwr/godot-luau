@@ -46,6 +46,23 @@ is a large part of its ~440 ns bare call.
     coroutine is dropped.
   - Dropped threads are reset (`lua_resetthread`) and returned to the pool.
   - When the Luau state closes, pending Callables do nothing.
+- **No thread is lost.** Every pooled thread is idle, running a call, or
+  suspended in `await` and owned by exactly one resumer Callable. A suspended
+  thread goes back to the pool when its resumer runs, when the resumer is
+  freed without running (emitter freed, signal disconnected), or when the
+  object that owns it is freed.
+  - **`coroutine.yield`** in code called from Godot would suspend a thread
+    nothing can resume. It is reported as an error and the thread goes back
+    at once.
+  - **Freeing an object** drops its suspended coroutines immediately, so a
+    method waiting on a long-lived signal doesn't keep the object's `self`
+    table alive. Each thread carries a serial number, changed whenever it is
+    reused, so a resumer that fires later does nothing.
+  - **At most 32 idle threads** are kept. After a burst of simultaneous
+    awaits, the rest are released for the garbage collector.
+  - Luau's collector shrinks the stacks of idle threads and clears their
+    unused slots every cycle, so a pooled thread neither stays large after
+    deep recursion nor holds stale values.
 - `lua_resume` is passed the thread currently running as `from`, so Luau's
   C-stack depth limit still applies across nested calls.
 
@@ -80,5 +97,13 @@ is a large part of its ~440 ns bare call.
   suspends. Unlike a GDScript coroutine, it can't be awaited from GDScript
   (`todo/await-from-gdscript.md`).
 - **Fennel** calls them the same way: `(await self.go)`, `(spawn f)`.
+- **Leak checks** in `demo/checks.gd` use `__luau_thread_stats()` (thread
+  counts, pending resumers, Lua memory after a full collection):
+  - two rounds of 10,000 await cycles reuse the same 3 threads, with Lua
+    memory flat between rounds;
+  - 1,000 simultaneous awaits fall back to 32 threads once resumed;
+  - `coroutine.yield` misuse and freeing a waiting object strand nothing.
+
+  Godot reports no leaked objects at exit (`--verbose`).
 - **`await` and `spawn` are new globals.** Scripts can still shadow them with
   locals.

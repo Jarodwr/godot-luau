@@ -212,6 +212,42 @@ func feature_checks() -> void:
 	f.go.emit()
 	check(f.state().get("spawned") == 12, "both spawned functions resumed")
 
+	# No leaks: threads go back to the pool, resumers are freed, memory returns
+	var base = f.thread_stats()
+	check(base.waiting == 0 and base.resumers == 0, "nothing waiting before the leak checks (got %s)" % base)
+	f.churn(10000)
+	var after_churn = f.thread_stats()
+	check(after_churn.threads == base.threads and after_churn.waiting == 0 and after_churn.resumers == 0,
+		"10,000 await cycles reuse the same threads (before %s, after %s)" % [base, after_churn])
+	f.churn(10000)
+	var after_second = f.thread_stats()
+	check(after_second.kb - after_churn.kb <= 4, "another 10,000 await cycles leave no Lua memory behind (%d KB -> %d KB -> %d KB)" % [base.kb, after_churn.kb, after_second.kb])
+	f.burst(1000)
+	var during_burst = f.thread_stats()
+	check(during_burst.waiting == 1000 and during_burst.resumers == 1000, "1,000 coroutines waiting at once (got %s)" % during_burst)
+	f.go.emit()
+	var after_burst = f.thread_stats()
+	check(after_burst.waiting == 0 and after_burst.resumers == 0 and after_burst.idle <= 32 and after_burst.threads <= base.threads + 32,
+		"after a burst, idle threads are capped at 32 (got %s)" % after_burst)
+	f.yield_wrongly()
+	var after_yield = f.thread_stats()
+	check(after_yield.threads == after_burst.threads and after_yield.idle == after_burst.idle,
+		"coroutine.yield in a method is an error and doesn't strand the thread (got %s)" % after_yield)
+	var keeper := Node.new()
+	keeper.add_user_signal("rare")
+	var w = Node.new()
+	w.set_script(script)
+	root.add_child(w)
+	w.wait_forever(Signal(keeper, "rare"))
+	check(w.thread_stats().waiting == 1, "a method waits on a long-lived signal")
+	w.free()
+	var after_free = f.thread_stats()
+	check(after_free.waiting == 0 and after_free.idle == after_yield.idle,
+		"freeing the object drops its waiting coroutine at once (got %s)" % after_free)
+	Signal(keeper, "rare").emit()
+	check(f.thread_stats().resumers == 0, "the stale resumer does nothing and is freed when it fires")
+	keeper.free()
+
 	# A coroutine of a freed object doesn't continue
 	var g = Node.new()
 	g.set_script(script)

@@ -204,23 +204,32 @@ bool push_lua_function_of(lua_State *L, const Variant &value);
 // threads so they can `await`.
 struct Coroutine {
 	lua_State *thread;
-	int ref;         // keeps the thread alive while the state lives
-	uint64_t owner;  // ObjectID of the object whose method runs, or 0
-	Coroutine *next; // in the idle list
+	int ref;          // keeps the thread alive while it is pooled or suspended
+	uint64_t owner;   // ObjectID of the object whose method runs, or 0
+	uint32_t serial;  // changes on every acquire: tells a stale resumer apart
+	bool awaiting;    // suspended in await (not coroutine.yield)
+	size_t index;     // in the list of all pooled threads
+	Coroutine *next;  // in the idle list
 };
 extern Coroutine *idle_threads;
+extern int idle_count;
+constexpr int MAX_IDLE_THREADS = 32;  // more are dropped: bursts don't stay
 Coroutine *new_thread();
+void drop_thread(Coroutine *co);
 // An idle pooled thread with an empty stack. `owner` (an ObjectID, or 0): the
-// object whose method runs on it; a coroutine isn't resumed after that
-// object is freed. Inline: it's on every call from Godot.
+// object whose method runs on it; its suspended coroutines are dropped when
+// it is freed. Inline: it's on every call from Godot.
 inline Coroutine *acquire_thread(uint64_t owner) {
 	Coroutine *co = idle_threads;
 	if (co != nullptr) {
 		idle_threads = co->next;
+		idle_count--;
 	} else {
 		co = new_thread();
 	}
 	co->owner = owner;
+	co->serial++;
+	co->awaiting = false;
 	return co;
 }
 // Runs the function and its `nargs` arguments pushed on the thread.
@@ -230,9 +239,17 @@ inline Coroutine *acquire_thread(uint64_t owner) {
 int run_thread(Coroutine *co, int nargs);
 inline void release_thread(Coroutine *co) {
 	lua_settop(co->thread, 0);
-	co->next = idle_threads;
-	idle_threads = co;
+	if (idle_count < MAX_IDLE_THREADS) {
+		co->next = idle_threads;
+		idle_threads = co;
+		idle_count++;
+	} else {
+		drop_thread(co);
+	}
 }
+// Drops the suspended coroutines of a freed object (its script instance's
+// free callback)
+void cancel_coroutines_of(uint64_t owner);
 void open_coroutines(lua_State *L);
 void clear_threads();
 
