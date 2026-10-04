@@ -32,14 +32,14 @@ namespace luau {
 
 Coroutine *idle_threads = nullptr;
 int idle_count = 0;
+lua_State *main_thread = nullptr;
+lua_State *running_thread = nullptr;
 
 namespace {
 
 std::vector<Coroutine *> all_threads;  // idle, running or suspended
 HashMap<uint64_t, int> waiting_by_owner;  // suspended coroutines per object
 int live_resumers = 0;
-lua_State *main_thread = nullptr;
-lua_State *running = nullptr;  // the thread now running, for lua_resume's `from`
 
 Coroutine *pooled(lua_State *thread) {
 	return static_cast<Coroutine *>(lua_getthreaddata(thread));
@@ -97,18 +97,10 @@ void reset_and_release(Coroutine *co) {
 	release_thread(co);
 }
 
-// Resumes `thread` (fresh with a function and arguments, or suspended) with
-// `nargs` values on its stack. Errors are reported. A pooled thread that
-// failed, or suspended other than in await, is reset and released.
-int resume_thread(lua_State *thread, int nargs) {
-	lua_State *outer = running;
-	running = thread;
-	int status = lua_resume(thread, outer ? outer : main_thread, nargs);
-	running = outer;
+} // namespace
+
+int thread_stopped(lua_State *thread, int status) {
 	Coroutine *co = pooled(thread);
-	if (status == LUA_OK) {
-		return status;
-	}
 	if (status == LUA_YIELD) {
 		if (co == nullptr || co->awaiting) {
 			return status;
@@ -125,8 +117,6 @@ int resume_thread(lua_State *thread, int nargs) {
 	}
 	return status;
 }
-
-} // namespace
 
 Coroutine *new_thread() {
 	lua_State *L = state();
@@ -150,10 +140,6 @@ void drop_thread(Coroutine *co) {
 	lua_setthreaddata(co->thread, nullptr);
 	lua_unref(state(), co->ref);  // the thread is collected
 	delete co;
-}
-
-int run_thread(Coroutine *co, int nargs) {
-	return resume_thread(co->thread, nargs);
 }
 
 Variant completion_signal(Coroutine *co) {
@@ -189,7 +175,7 @@ void clear_threads() {
 	waiting_by_owner.clear();
 	idle_threads = nullptr;
 	idle_count = 0;
-	running = nullptr;
+	running_thread = nullptr;
 	main_thread = nullptr;
 }
 

@@ -1423,8 +1423,8 @@ Variant to_variant(lua_State *L, int index) {
 }
 
 void to_variant_into_nil(lua_State *L, int index, Variant *r_dest) {
-	if (lua_isnil(L, index)) {
-		return;
+	if (lua_type(L, index) <= LUA_TNIL) {
+		return;  // nil, or nothing at that index (no result)
 	}
 	// Constructed in place (no move), then relocated: r_dest held nil, so
 	// there's nothing to destroy there, and the buffer is never destroyed

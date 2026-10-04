@@ -71,26 +71,38 @@ is a large part of its ~440 ns bare call.
 - **Any method can wait:**
   `await(self:get_tree():create_timer(1).timeout)`; signal handlers too, which
   are closures connected with `signal:connect(function() … end)`.
-- **Calls from Godot cost ~2–4 ns more.** `lua_resume` on a pooled thread
-  costs a little more than `lua_pcall` on the main thread. In isolation (Luau
-  alone, a no-op function) the difference is 1.5–2 ns, and none when nested
-  inside a running coroutine. The pool itself is an intrusive free list,
-  inlined into the callers: profiling showed a `std::vector` behind calls into
-  another file costing as much as the resume. Interleaved A/B against the
-  build before `await`, 5 rounds of 5 repeats, ns per op:
+- **Calls from Godot cost ~3 ns more** than `lua_pcall` on the main thread
+  did.
+  - **Luau's share:** `lua_resume` alone costs 1.5–2 ns more than
+    `lua_pcall` (Luau alone, a no-op function), and nothing more when nested
+    inside a running coroutine.
+  - **The rest is ours, trimmed by profiling:**
+    - the idle pool is an intrusive free list, inlined into the callers (a
+      `std::vector` behind out-of-line calls cost as much as the resume);
+    - the resume and its success check are inline, and only yields and
+      errors call out of line;
+    - the result is read without asking for the stack size.
+  - **How it was found:** a full-suite A/B against the build before `await`
+    found +5–7 ns, and building each later commit showed all of it arrived
+    with `await` itself.
+  - Interleaved A/B after those changes, 3 rounds of 5 repeats, ns per op:
 
-  | Case | Before | After |
+  | Case | Before `await` | Now |
   |---|---:|---:|
-  | `call_noop` | 37.0 | 39.5 |
-  | `call_args6` | 110.5 | 111.6 |
-  | `echo_string` | 117.6 | 121.1 |
-  | `api_signal_emit` | 89.2 | 91.7 |
-  | `callable_from_script` | 50.7 | 47.6 |
-  | `notification_into_script` | 42.9 | 39.3 |
+  | `call_noop` | 36.6 | 39.6 |
+  | `call_add2` | 57.0 | 59.7 |
+  | `echo_int` | 51.4 | 54.6 |
+  | `echo_float` | 51.3 | 55.0 |
+  | `call_typed` | 64.1 | 67.8 |
+  | `ret_vector2` | 54.6 | 57.8 |
+  | `echo_string` | 117.7 | 118.5 |
+  | `callable_from_script` | 51.4 | 46.6 |
+  | `notification_into_script` | 42.8 | 38.6 |
 
-  The last two got faster: Lua Callables now write their result in place,
-  and `_notification` no longer reorders its arguments for `lua_pcall`.
-  Lua-to-Lua calls and engine calls from Lua are unaffected.
+  `callable_from_script` and `notification_into_script` got faster: Lua
+  Callables write their result in place, and `_notification` no longer
+  reorders its arguments for `lua_pcall`. Lua-to-Lua calls, engine calls
+  from Lua and the VM cases are unchanged (full-suite A/B).
 - **Awaiting is cheaper than GDScript's:** `api_await_signal` (start a
   coroutine, await a signal, emit it) costs 236 ns against GDScript's 597.
 - **The caller gets `nil`.** Godot gets `nil` back from a method that

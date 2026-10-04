@@ -235,11 +235,27 @@ inline Coroutine *acquire_thread(uint64_t owner) {
 	co->completion = 0;
 	return co;
 }
+extern lua_State *main_thread;
+extern lua_State *running_thread;  // for lua_resume's `from`
+// After a resume that didn't finish: a yield in await is kept; anything else
+// (an error, coroutine.yield) is reported and the thread reset and released
+int thread_stopped(lua_State *thread, int status);
+// Resumes `thread` (fresh with a function and arguments, or suspended) with
+// `nargs` values on its stack. Inline: it's on every call from Godot.
+inline int resume_thread(lua_State *thread, int nargs) {
+	lua_State *outer = running_thread;
+	running_thread = thread;
+	int status = lua_resume(thread, outer ? outer : main_thread, nargs);
+	running_thread = outer;
+	return status == LUA_OK ? LUA_OK : thread_stopped(thread, status);
+}
 // Runs the function and its `nargs` arguments pushed on the thread.
 // LUA_OK: the results are on the thread's stack; the caller reads them, then
 // calls release_thread. LUA_YIELD: suspended in `await`, which owns it from
 // now on. Anything else: the error was reported and the thread released.
-int run_thread(Coroutine *co, int nargs);
+inline int run_thread(Coroutine *co, int nargs) {
+	return resume_thread(co->thread, nargs);
+}
 inline void release_thread(Coroutine *co) {
 	lua_settop(co->thread, 0);
 	if (idle_count < MAX_IDLE_THREADS) {

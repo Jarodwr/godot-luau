@@ -787,12 +787,10 @@ static void call_func(Instance *instance, GDExtensionConstStringNamePtr p_method
 	if (status != LUA_OK) {
 		return;  // failed: reported
 	}
-	if (lua_gettop(L) > 0) {
-		if (method->has_ret_type) {
-			to_typed(L, 1, method->ret_type, (Variant *)r_ret);
-		} else {
-			to_variant_into_nil(L, 1, (Variant *)r_ret);
-		}
+	if (!method->has_ret_type) {
+		to_variant_into_nil(L, 1, (Variant *)r_ret);  // nothing returned: stays nil
+	} else if (lua_gettop(L) > 0) {
+		to_typed(L, 1, method->ret_type, (Variant *)r_ret);
 	}
 	release_thread(co);
 }
