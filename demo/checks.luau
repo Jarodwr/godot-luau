@@ -14,6 +14,44 @@ function Checks:array_oob(a) return a[99] end
 
 function Checks:echo(value) return value end
 
+-- Opaque 64-bit ints (ADR 0043)
+function Checks:int64_checks()
+	local r = RefCounted.new()
+	local id = r:get_instance_id()  -- RefCounted ids have bit 63 set: beyond 2^53
+	local r2 = RefCounted.new()
+	local id2 = r2:get_instance_id()
+	local t = {}
+	t[id] = "x"
+	local rng = RandomNumberGenerator.new()
+	rng.seed = 12345
+	rng:randi()
+	local state = rng.state
+	local first = rng:randi()
+	rng.state = state
+	local arr = PackedInt64Array()
+	arr:append(id)
+	local d = Dictionary()
+	d[id] = id
+	self:set_meta("big_id", id)
+	return {
+		opaque = typeof(id) == "int64",
+		roundtrip = instance_from_id(id) == r,
+		equal = id == r:get_instance_id() and id ~= id2,
+		key = t[r:get_instance_id()] == "x",
+		order = ((id < id2) ~= (id2 < id)) and id <= id and not (id < id),
+		less = id < id2,
+		text = tostring(id),
+		concat = "id " .. id,
+		arith_error = not pcall(function() return id + 1 end),
+		mixed_compare_error = not pcall(function() return id < 5 end),
+		small_is_number = type(self:get_instance_id()) == "number",
+		rng_state = rng:randi() == first,
+		packed_array = arr[0] == id,
+		dictionary = d[id] == id,
+		refs = { r, r2 },
+	}
+end
+
 -- Table conversions (ADR 0027, 0041): each shape, compared in checks.gd
 function Checks:tables()
 	local backwards = {}

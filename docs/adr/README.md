@@ -66,3 +66,4 @@ at the same optimisation level.
 | [0040](0040-results-without-variant-temporaries.md) | Results written into engine-owned Variants; property accessors resolved at load | Accepted |
 | [0041](0041-table-conversion-in-place.md) | Lua tables to Arrays: one sequence check, elements written in place | Accepted |
 | [0042](0042-operator-dispatch-trimmed.md) | Operator dispatch fetches operands once; elementwise maths in fixed-width form | Accepted |
+| [0043](0043-opaque-64-bit-integers.md) | Integers beyond ±2^53 are opaque 64-bit values | Accepted |

@@ -283,9 +283,7 @@ bool to_native(lua_State *L, int index, ArgType type, NativeSlot &slot, GDExtens
 			*reinterpret_cast<GDExtensionBool *>(slot.bytes) = lua_toboolean(L, index);
 			return true;
 		case T_INT:
-			if (lua_type(L, index) != LUA_TNUMBER) return false;
-			*reinterpret_cast<int64_t *>(slot.bytes) = (int64_t)lua_tonumber(L, index);
-			return true;
+			return to_int(L, index, *reinterpret_cast<int64_t *>(slot.bytes));
 		case T_FLOAT:
 			if (lua_type(L, index) != LUA_TNUMBER) return false;
 			*reinterpret_cast<double *>(slot.bytes) = lua_tonumber(L, index);
@@ -416,7 +414,7 @@ void push_native(lua_State *L, ArgType type, NativeSlot &slot) {
 	switch (type) {
 		case T_VOID: lua_pushnil(L); break;
 		case T_BOOL: lua_pushboolean(L, *reinterpret_cast<GDExtensionBool *>(slot.bytes)); break;
-		case T_INT: lua_pushnumber(L, (double)*reinterpret_cast<int64_t *>(slot.bytes)); break;
+		case T_INT: push_int(L, *reinterpret_cast<int64_t *>(slot.bytes)); break;
 		case T_FLOAT: lua_pushnumber(L, *reinterpret_cast<double *>(slot.bytes)); break;
 		case T_STRING: push_string(L, *reinterpret_cast<String *>(slot.bytes)); break;
 		case T_STRING_NAME: push_string_name(L, *reinterpret_cast<StringName *>(slot.bytes)); break;
@@ -502,9 +500,7 @@ static bool to_simple(lua_State *L, int index, ArgType type, SimpleValue &r_valu
 			r_value.d = lua_tonumber(L, index);
 			return true;
 		case T_INT:
-			if (lua_type(L, index) != LUA_TNUMBER) return false;
-			r_value.i = (int64_t)lua_tonumber(L, index);
-			return true;
+			return to_int(L, index, r_value.i);
 		case T_BOOL:
 			r_value.b = lua_toboolean(L, index);
 			return true;
@@ -518,7 +514,7 @@ static void push_simple(lua_State *L, ArgType type, const SimpleValue &value) {
 		case T_VECTOR2: lua_pushvector(L, value.v[0], value.v[1], 0.0f); break;
 		case T_VECTOR3: lua_pushvector(L, value.v[0], value.v[1], value.v[2]); break;
 		case T_FLOAT: lua_pushnumber(L, value.d); break;
-		case T_INT: lua_pushnumber(L, (double)value.i); break;
+		case T_INT: push_int(L, value.i); break;
 		case T_BOOL: lua_pushboolean(L, value.b); break;
 		default: lua_pushnil(L); break;
 	}
@@ -656,7 +652,7 @@ static bool fast_get(lua_State *L, GDExtensionObjectPtr object, const Method &ge
 		case T_INT: {
 			int64_t i;
 			gdextension_interface::object_method_bind_ptrcall(getter.bind, object, nullptr, &i);
-			lua_pushnumber(L, (double)i);
+			push_int(L, i);
 			return true;
 		}
 		case T_BOOL: {
@@ -690,8 +686,7 @@ static bool fast_set(lua_State *L, GDExtensionObjectPtr object, const Method &se
 			value.d = lua_tonumber(L, index);
 			break;
 		case T_INT:
-			if (lua_type(L, index) != LUA_TNUMBER) return false;
-			value.i = (int64_t)lua_tonumber(L, index);
+			if (!to_int(L, index, value.i)) return false;
 			break;
 		case T_BOOL:
 			value.b = lua_toboolean(L, index);
@@ -1225,7 +1220,7 @@ bool push_plain_variant(lua_State *L, const Variant &value) {
 	switch (*reinterpret_cast<const int32_t *>(bytes)) {
 		case Variant::NIL: lua_pushnil(L); return true;
 		case Variant::BOOL: lua_pushboolean(L, *reinterpret_cast<const bool *>(data)); return true;
-		case Variant::INT: lua_pushnumber(L, (double)*reinterpret_cast<const int64_t *>(data)); return true;
+		case Variant::INT: push_int(L, *reinterpret_cast<const int64_t *>(data)); return true;
 		case Variant::FLOAT: lua_pushnumber(L, *reinterpret_cast<const double *>(data)); return true;
 		case Variant::VECTOR2: {
 			const float *v = reinterpret_cast<const float *>(data);
@@ -1307,6 +1302,9 @@ bool write_plain_variant(lua_State *L, int index, void *memory, bool vectors_as_
 			} else if (tag == LUTAG_RID) {
 				type = Variant::RID;
 				*reinterpret_cast<uint64_t *>(data) = packed_bits(L, index, tag);
+			} else if (tag == LUTAG_INT64) {
+				type = Variant::INT;
+				*reinterpret_cast<uint64_t *>(data) = packed_bits(L, index, tag);
 			} else {
 				return false;
 			}
@@ -1326,7 +1324,7 @@ void push_variant(lua_State *L, const Variant &value) {
 	switch (value.get_type()) {
 		case Variant::NIL: lua_pushnil(L); break;
 		case Variant::BOOL: lua_pushboolean(L, (bool)value); break;
-		case Variant::INT: lua_pushnumber(L, (double)(int64_t)value); break;
+		case Variant::INT: push_int(L, (int64_t)value); break;
 		case Variant::FLOAT: lua_pushnumber(L, (double)value); break;
 		case Variant::STRING: push_string(L, value); break;
 		case Variant::STRING_NAME: push_string_name(L, (StringName)value); break;

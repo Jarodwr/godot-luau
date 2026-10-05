@@ -366,7 +366,7 @@ bool call_builtin_method(lua_State *L, const Variant *self, int atom, int first,
 		case Variant::INT: {
 			int64_t v = 0;
 			method.function(base, argv, &v, argc);
-			lua_pushnumber(L, (double)v);
+			push_int(L, v);
 			return true;
 		}
 		case Variant::FLOAT: {
@@ -573,6 +573,10 @@ void classify(lua_State *L, int index, Operand &operand, int lua_t, const unsign
 				operand.type = Variant::RID;
 				*reinterpret_cast<uint64_t *>(operand.storage) = packed_bits(L, index, tag);
 				operand.pointer = operand.storage;
+			} else if (tag == LUTAG_INT64) {
+				operand.type = Variant::INT;
+				*reinterpret_cast<uint64_t *>(operand.storage) = packed_bits(L, index, tag);
+				operand.pointer = operand.storage;
 			}
 			return;
 		}
@@ -772,6 +776,11 @@ bool call_validated_operator(lua_State *L, int op) {
 		if (packed_vector2i_arith(L, op)) {
 			return true;
 		}
+		// Opaque 64-bit ints compare, but aren't numbers (docs/adr/0043)
+		if (op != Variant::OP_EQUAL && op != Variant::OP_LESS && op != Variant::OP_LESS_EQUAL &&
+				(packed_tag(L, 1) == LUTAG_INT64 || packed_tag(L, 2) == LUTAG_INT64)) {
+			luaL_error(L, "arithmetic on a 64-bit integer (an id, handle or UID): these compare and print but aren't numbers");
+		}
 	} else if (elementwise_arith(L, op, held_a, held_b)) {
 		return true;
 	}
@@ -805,7 +814,7 @@ bool call_validated_operator(lua_State *L, int op) {
 		case Variant::INT: {
 			int64_t r = 0;
 			entry->function(a.pointer, b.pointer, &r);
-			lua_pushnumber(L, (double)r);
+			push_int(L, r);
 			return true;
 		}
 		case Variant::FLOAT: {
@@ -1519,8 +1528,7 @@ static bool fast_utility(lua_State *L, const UtilityInfo &info, GDExtensionPtrUt
 				*reinterpret_cast<double *>(slot) = lua_tonumber(L, 1 + i);
 				break;
 			case T_INT:
-				if (lt != LUA_TNUMBER) return false;
-				*reinterpret_cast<int64_t *>(slot) = (int64_t)lua_tonumber(L, 1 + i);
+				if (!to_int(L, 1 + i, *reinterpret_cast<int64_t *>(slot))) return false;
 				break;
 			case T_BOOL:
 				*reinterpret_cast<GDExtensionBool *>(slot) = lua_toboolean(L, 1 + i);
@@ -1549,7 +1557,7 @@ static bool fast_utility(lua_State *L, const UtilityInfo &info, GDExtensionPtrUt
 		case T_INT: {
 			int64_t v;
 			function(&v, argv, argc);
-			lua_pushnumber(L, (double)v);
+			push_int(L, v);
 			return true;
 		}
 		case T_BOOL: {
@@ -1917,8 +1925,8 @@ int packed_method_call(lua_State *L) {
 // Fields (x, y) and methods; methods are cached per tag in the upvalue table
 int packed_index(lua_State *L) {
 	int tag = packed_tag(L, 1);
-	if (lua_type(L, 2) != LUA_TSTRING || tag == 0) {
-		return 0;
+	if (lua_type(L, 2) != LUA_TSTRING || tag == 0 || tag == LUTAG_INT64) {
+		return 0;  // opaque 64-bit ints have no members
 	}
 	size_t length;
 	const char *key = lua_tolstring(L, 2, &length);
@@ -1947,6 +1955,25 @@ int packed_index(lua_State *L) {
 	return 1;
 }
 
+// "id: " .. id: opaque 64-bit ints (and other packed values) concatenate as
+// their printed form
+int packed_concat(lua_State *L) {
+	for (int i = 1; i <= 2; i++) {
+		if (packed_tag(L, i)) {
+			alignas(Variant) unsigned char bytes[sizeof(Variant)];
+			if (!packed_as_variant(L, i, bytes)) {
+				luaL_error(L, "attempt to concatenate a light userdata");
+			}
+			push_string(L, reinterpret_cast<const Variant *>(bytes)->stringify());
+			lua_replace(L, i);
+		} else if (lua_type(L, i) != LUA_TSTRING && lua_type(L, i) != LUA_TNUMBER) {
+			luaL_error(L, "attempt to concatenate %s", luaL_typename(L, i));
+		}
+	}
+	lua_concat(L, 2);
+	return 1;
+}
+
 int packed_tostring(lua_State *L) {
 	alignas(Variant) unsigned char bytes[sizeof(Variant)];
 	if (!packed_as_variant(L, 1, bytes)) {
@@ -1969,11 +1996,19 @@ static void register_packed_values(lua_State *L) {
 	lua_rawseti(L, -2, LUTAG_VECTOR2I);
 	lua_newtable(L);
 	lua_rawseti(L, -2, LUTAG_RID);
+	lua_newtable(L);
+	lua_rawseti(L, -2, LUTAG_INT64);
 	lua_pushcclosurek(L, packed_index, "__index", 1, nullptr);
 	lua_setfield(L, -2, "__index");
 	lua_pushcfunction(L, packed_tostring, "__tostring");
 	lua_setfield(L, -2, "__tostring");
+	lua_pushcfunction(L, packed_concat, "__concat");
+	lua_setfield(L, -2, "__concat");
 	set_operator_metamethods(L, -1);
+	// typeof() names
+	lua_setlightuserdataname(L, LUTAG_VECTOR2I, "Vector2i");
+	lua_setlightuserdataname(L, LUTAG_RID, "RID");
+	lua_setlightuserdataname(L, LUTAG_INT64, "int64");
 	lua_pushlightuserdatatagged(L, nullptr, LUTAG_VECTOR2I);
 	lua_insert(L, -2);
 	lua_setmetatable(L, -2);  // sets the metatable shared by all light userdata

@@ -28,7 +28,38 @@ constexpr bool PACKED_VALUES = true;
 #else
 constexpr bool PACKED_VALUES = false;
 #endif
-enum : int { LUTAG_VECTOR2I = 1, LUTAG_RID = 2 };
+enum : int { LUTAG_VECTOR2I = 1, LUTAG_RID = 2, LUTAG_INT64 = 3 };
+
+// ---- Integers (docs/adr/0043)
+//
+// A Godot int becomes a Lua number when a double holds it exactly (within
+// ±2^53), else an opaque 64-bit value: a tagged light userdata holding the
+// bits, exact through Lua and back. Opaque values compare with each other
+// (==, <, <=), work as table keys and print their digits; arithmetic on them
+// is an error. Big ints are ids, handles, UIDs and RNG state, not numbers.
+constexpr int64_t EXACT_NUMBER_LIMIT = int64_t(1) << 53;
+
+inline void push_int(lua_State *L, int64_t v) {
+	if (!PACKED_VALUES || (v >= -EXACT_NUMBER_LIMIT && v <= EXACT_NUMBER_LIMIT)) {
+		lua_pushnumber(L, (double)v);
+	} else {
+		lua_pushlightuserdatatagged(L, (void *)(uintptr_t)(uint64_t)v, LUTAG_INT64);
+	}
+}
+
+// The int at `index`: a number (truncated) or an opaque 64-bit value
+inline bool to_int(lua_State *L, int index, int64_t &r) {
+	int type = lua_type(L, index);
+	if (type == LUA_TNUMBER) {
+		r = (int64_t)lua_tonumber(L, index);
+		return true;
+	}
+	if (PACKED_VALUES && type == LUA_TLIGHTUSERDATA && lua_lightuserdatatag(L, index) == LUTAG_INT64) {
+		r = (int64_t)(uint64_t)(uintptr_t)lua_tolightuserdatatagged(L, index, LUTAG_INT64);
+		return true;
+	}
+	return false;
+}
 
 inline void push_packed_vector2i(lua_State *L, int32_t x, int32_t y) {
 	uint64_t bits = (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32);

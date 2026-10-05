@@ -55,6 +55,17 @@ func _initialize() -> void:
 	check(a.lua_length("✓") == 3, "Lua sees UTF-8 bytes")
 	check(a.echo(&"sname") == "sname", "StringName argument arrives as a string")
 
+	# Opaque 64-bit ints (ADR 0043)
+	var big = a.int64_checks()
+	var id1: int = big.refs[0].get_instance_id()
+	var id2: int = big.refs[1].get_instance_id()
+	for key in ["opaque", "roundtrip", "equal", "key", "order", "arith_error", "mixed_compare_error",
+			"small_is_number", "rng_state", "packed_array", "dictionary"]:
+		check(big.get(key) == true, "64-bit ints: " + key)
+	check(big.less == (id1 < id2), "64-bit ints order as Godot's ints do")
+	check(big.text == str(id1) and big.concat == "id " + str(id1), "64-bit ints print all their digits (%s)" % big.text)
+	check(a.get_meta("big_id") == id1, "a 64-bit int stored from Lua is exact in Godot")
+
 	# Table conversions: arrays sized and written in place (ADR 0041)
 	var tables = a.tables()
 	var expected_tables := [

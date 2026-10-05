@@ -202,7 +202,10 @@ Missing features are tracked one per file in [`todo/`](todo/README.md).
 - **Vector2 and Vector3 share Luau's `vector`.** A vector passed where Godot
   expects a Variant becomes Vector2 if z is 0, else Vector3. Typed engine
   arguments are unaffected.
-- **Luau numbers are doubles.** Integers beyond 2^53 lose precision (same as
-  LuaJIT).
+- **Luau numbers are doubles.** Integers beyond ±2^53 (ids of RefCounted
+  objects, UIDs, RNG state) are opaque 64-bit values: exact, comparable and
+  printable, but not numbers
+  ([0043](docs/adr/0043-opaque-64-bit-integers.md)). A whole number sent where
+  Godot takes any type is an `int`.
 - **No RPC, editor features or debugging yet.** One Luau
   state, main thread only.
