@@ -14,6 +14,41 @@ function Checks:array_oob(a) return a[99] end
 
 function Checks:echo(value) return value end
 
+-- Vector2 and Vector3 as separate Luau types (ADR 0044)
+function Checks:vector_kind_checks()
+	local mat = ShaderMaterial.new()
+	local shader = Shader.new()
+	shader.code = "shader_type spatial; uniform vec3 dir;"
+	mat.shader = shader
+	mat:set_shader_parameter("dir", Vector3.UP)
+	self.kind_mat = mat
+	self:set_meta("v3", Vector3(1, 2, 0))
+	self:set_meta("v2", Vector2(1, 2) * 2)
+	local arr = Array({ Vector3(4, 5, 0) })
+	local back = arr[0]                -- a Vector3 with z = 0 read back from Godot
+	local again = Array({ back })      -- and written again
+	local keys = {}
+	keys[Vector2(1, 2)] = "2d"
+	keys[Vector3(1, 2, 0)] = "3d"
+	local basis = Basis(Vector3.UP, 0.5)
+	local t = Transform3D(basis, Vector3(1, 2, 3))
+	return {
+		roundtrip = again,
+		v2_math = Vector2(1, 2) + Vector2(3, 4) * 0.5,
+		v3_math = Vector3(1, 2, 0) * 2,
+		mixed_eq = Vector2(0, 1) ~= Vector3(0, 1, 0) and Vector3.UP == Vector3(0, 1, 0),
+		keys = keys[Vector2(1, 2)] == "2d" and keys[Vector3(1, 2, 0)] == "3d",
+		cross2 = Vector2(1, 0):cross(Vector2(0, 1)),
+		cross3 = Vector3(1, 0, 0):cross(Vector3(0, 1, 0)),
+		rotated2 = Vector2(1, 0):rotated(math.pi / 2),
+		rotated3 = Vector3(1, 0, 0):rotated(Vector3.UP, math.pi / 2),
+		xform = t * Vector3(1, 0, 0),
+		basis_ok = basis ~= nil,
+		normalized2 = Vector2(3, 4):normalized(),
+		v2_z = Vector2(1, 2).z,
+	}
+end
+
 -- Opaque 64-bit ints (ADR 0043)
 function Checks:int64_checks()
 	local r = RefCounted.new()

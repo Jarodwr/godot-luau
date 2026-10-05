@@ -1079,7 +1079,7 @@ static int luauF_vector(lua_State* L, StkId res, TValue* arg0, int nresults, Stk
         }
         setvvalue(L, res, x, y, z, w);
 #else
-        setvvalue(L, res, x, y, z, 0.0);
+        setvvaluet(L, res, x, y, z, 0.0, nparams == 2 ? LUA_TVECTOR2 : LUA_TVECTOR);
 #endif
 
         return 1;
@@ -1486,7 +1486,7 @@ static int luauF_vectornormalize(lua_State* L, StkId res, TValue* arg0, int nres
 #else
         LUA_VECTOR_TYPE invSqrt = LUA_VECTOR_TYPE(1.0) / luai_sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
 
-        setvvalue(L, res, v[0] * invSqrt, v[1] * invSqrt, v[2] * invSqrt, 0.0);
+        setvvaluet(L, res, v[0] * invSqrt, v[1] * invSqrt, v[2] * invSqrt, 0.0, vectortag(arg0));
 #endif
 
         return 1;
@@ -1538,7 +1538,7 @@ static int luauF_vectorfloor(lua_State* L, StkId res, TValue* arg0, int nresults
 #if LUA_VECTOR_SIZE == 4
         setvvalue(L, res, luai_floor(v[0]), luai_floor(v[1]), luai_floor(v[2]), luai_floor(v[3]));
 #else
-        setvvalue(L, res, luai_floor(v[0]), luai_floor(v[1]), luai_floor(v[2]), 0.0);
+        setvvaluet(L, res, luai_floor(v[0]), luai_floor(v[1]), luai_floor(v[2]), 0.0, vectortag(arg0));
 #endif
 
         return 1;
@@ -1556,7 +1556,7 @@ static int luauF_vectorceil(lua_State* L, StkId res, TValue* arg0, int nresults,
 #if LUA_VECTOR_SIZE == 4
         setvvalue(L, res, luai_ceil(v[0]), luai_ceil(v[1]), luai_ceil(v[2]), luai_ceil(v[3]));
 #else
-        setvvalue(L, res, luai_ceil(v[0]), luai_ceil(v[1]), luai_ceil(v[2]), 0.0);
+        setvvaluet(L, res, luai_ceil(v[0]), luai_ceil(v[1]), luai_ceil(v[2]), 0.0, vectortag(arg0));
 #endif
 
         return 1;
@@ -1574,7 +1574,7 @@ static int luauF_vectorabs(lua_State* L, StkId res, TValue* arg0, int nresults, 
 #if LUA_VECTOR_SIZE == 4
         setvvalue(L, res, luai_fabs(v[0]), luai_fabs(v[1]), luai_fabs(v[2]), luai_fabs(v[3]));
 #else
-        setvvalue(L, res, luai_fabs(v[0]), luai_fabs(v[1]), luai_fabs(v[2]), 0.0);
+        setvvaluet(L, res, luai_fabs(v[0]), luai_fabs(v[1]), luai_fabs(v[2]), 0.0, vectortag(arg0));
 #endif
 
         return 1;
@@ -1592,7 +1592,7 @@ static int luauF_vectorsign(lua_State* L, StkId res, TValue* arg0, int nresults,
 #if LUA_VECTOR_SIZE == 4
         setvvalue(L, res, luai_sign(v[0]), luai_sign(v[1]), luai_sign(v[2]), luai_sign(v[3]));
 #else
-        setvvalue(L, res, luai_sign(v[0]), luai_sign(v[1]), luai_sign(v[2]), 0.0);
+        setvvaluet(L, res, luai_sign(v[0]), luai_sign(v[1]), luai_sign(v[2]), 0.0, vectortag(arg0));
 #endif
 
         return 1;
@@ -1621,7 +1621,7 @@ static int luauF_vectorclamp(lua_State* L, StkId res, TValue* arg0, int nresults
                 luai_clamp(v[3], min[3], max[3])
             );
 #else
-            setvvalue(L, res, luai_clamp(v[0], min[0], max[0]), luai_clamp(v[1], min[1], max[1]), luai_clamp(v[2], min[2], max[2]), 0.0);
+            setvvaluet(L, res, luai_clamp(v[0], min[0], max[0]), luai_clamp(v[1], min[1], max[1]), luai_clamp(v[2], min[2], max[2]), 0.0, vectortag(arg0));
 #endif
 
             return 1;
@@ -1665,7 +1665,7 @@ static int luauF_vectormin(lua_State* L, StkId res, TValue* arg0, int nresults, 
 #endif
         }
 
-        setvvalue(L, res, result[0], result[1], result[2], result[3]);
+        setvvaluet(L, res, result[0], result[1], result[2], result[3], vectortag(arg0));
         return 1;
     }
 
@@ -1706,7 +1706,7 @@ static int luauF_vectormax(lua_State* L, StkId res, TValue* arg0, int nresults, 
 #endif
         }
 
-        setvvalue(L, res, result[0], result[1], result[2], result[3]);
+        setvvaluet(L, res, result[0], result[1], result[2], result[3], vectortag(arg0));
         return 1;
     }
 
@@ -1724,7 +1724,7 @@ static int luauF_vectorlerp(lua_State* L, StkId res, TValue* arg0, int nresults,
 #if LUA_VECTOR_SIZE == 4
         setvvalue(L, res, luai_lerp(a[0], b[0], t), luai_lerp(a[1], b[1], t), luai_lerp(a[2], b[2], t), luai_lerp(a[3], b[3], t));
 #else
-        setvvalue(L, res, luai_lerp(a[0], b[0], t), luai_lerp(a[1], b[1], t), luai_lerp(a[2], b[2], t), 0.0);
+        setvvaluet(L, res, luai_lerp(a[0], b[0], t), luai_lerp(a[1], b[1], t), luai_lerp(a[2], b[2], t), 0.0, vectortag2(arg0, args));
 #endif
 
         return 1;

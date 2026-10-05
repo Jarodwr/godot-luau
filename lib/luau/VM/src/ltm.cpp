@@ -27,6 +27,9 @@ const char* const luaT_typenames[] = {
 
 #if LUA_VECTOR_DOUBLE == 0
     "vector",
+#if LUA_VECTOR_KINDS
+    "vector", // LUA_TVECTOR2: type() and typeof() don't tell the kinds apart
+#endif
 #endif
 
     "string",

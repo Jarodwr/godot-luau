@@ -199,9 +199,10 @@ Design decisions and proposed changes are recorded in [`docs/adr/`](docs/adr/REA
 
 Missing features are tracked one per file in [`todo/`](todo/README.md).
 
-- **Vector2 and Vector3 share Luau's `vector`.** A vector passed where Godot
-  expects a Variant becomes Vector2 if z is 0, else Vector3. Typed engine
-  arguments are unaffected.
+- **Luau is a fork** ([github.com/Jarodwr/luau](https://github.com/Jarodwr/luau),
+  branch `godot-vector2`, vendored in `lib/luau`): Vector2 and Vector3 are
+  separate Luau types ([0044](docs/adr/0044-vector2-and-vector3-as-luau-types.md)),
+  so each converts exactly. Native code generation is unsupported with it.
 - **Luau numbers are doubles.** Integers beyond ±2^53 (ids of RefCounted
   objects, UIDs, RNG state) are opaque 64-bit values: exact, comparable and
   printable, but not numbers

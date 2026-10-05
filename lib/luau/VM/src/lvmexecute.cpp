@@ -625,14 +625,14 @@ reentry:
                             ic = 3;
 #endif
 
-                        if (unsigned(ic) < LUA_VECTOR_SIZE && name[1] == '\0')
+                        if (unsigned(ic) < vectorfields(rb) && name[1] == '\0')
                         {
                             const LUA_VECTOR_TYPE* v = vvalue(rb); // silences ubsan when indexing v[]
                             setnvalue(ra, v[ic]);
                             VM_NEXT();
                         }
 
-                        fn = fasttm(L, L->global->mt[LUA_TVECTOR], TM_INDEX);
+                        fn = fasttm(L, L->global->mt[vectortag(rb)], TM_INDEX);
 
                         if (fn && ttisfunction(fn) && clvalue(fn)->isC)
                         {
@@ -1391,7 +1391,7 @@ reentry:
                         VM_ASSERT_PC(pc);
                         VM_NEXT();
 
-                    case LUA_TVECTOR:
+                    case_vector2 case LUA_TVECTOR:
                         pc += luai_veceq(vvalue(ra), vvalue(rb)) ? LUAU_INSN_D(insn) : 1;
                         VM_ASSERT_PC(pc);
                         VM_NEXT();
@@ -1524,7 +1524,7 @@ reentry:
                         VM_ASSERT_PC(pc);
                         VM_NEXT();
 
-                    case LUA_TVECTOR:
+                    case_vector2 case LUA_TVECTOR:
                         pc += !luai_veceq(vvalue(ra), vvalue(rb)) ? LUAU_INSN_D(insn) : 1;
                         VM_ASSERT_PC(pc);
                         VM_NEXT();
@@ -1774,7 +1774,7 @@ reentry:
                 {
                     const LUA_VECTOR_TYPE* vb = vvalue(rb);
                     const LUA_VECTOR_TYPE* vc = vvalue(rc);
-                    setvvalue(L, ra, vb[0] + vc[0], vb[1] + vc[1], vb[2] + vc[2], vb[3] + vc[3]);
+                    setvvaluet(L, ra, vb[0] + vc[0], vb[1] + vc[1], vb[2] + vc[2], vb[3] + vc[3], vectortag2(rb, rc));
                     VM_NEXT();
                 }
                 else
@@ -1820,7 +1820,7 @@ reentry:
                 {
                     const LUA_VECTOR_TYPE* vb = vvalue(rb);
                     const LUA_VECTOR_TYPE* vc = vvalue(rc);
-                    setvvalue(L, ra, vb[0] - vc[0], vb[1] - vc[1], vb[2] - vc[2], vb[3] - vc[3]);
+                    setvvaluet(L, ra, vb[0] - vc[0], vb[1] - vc[1], vb[2] - vc[2], vb[3] - vc[3], vectortag2(rb, rc));
                     VM_NEXT();
                 }
                 else
@@ -1866,21 +1866,21 @@ reentry:
                 {
                     const LUA_VECTOR_TYPE* vb = vvalue(rb);
                     LUA_VECTOR_TYPE vc = cast_to(LUA_VECTOR_TYPE, nvalue(rc));
-                    setvvalue(L, ra, vb[0] * vc, vb[1] * vc, vb[2] * vc, vb[3] * vc);
+                    setvvaluet(L, ra, vb[0] * vc, vb[1] * vc, vb[2] * vc, vb[3] * vc, vectortag(rb));
                     VM_NEXT();
                 }
                 else if (ttisvector(rb) && ttisvector(rc))
                 {
                     const LUA_VECTOR_TYPE* vb = vvalue(rb);
                     const LUA_VECTOR_TYPE* vc = vvalue(rc);
-                    setvvalue(L, ra, vb[0] * vc[0], vb[1] * vc[1], vb[2] * vc[2], vb[3] * vc[3]);
+                    setvvaluet(L, ra, vb[0] * vc[0], vb[1] * vc[1], vb[2] * vc[2], vb[3] * vc[3], vectortag2(rb, rc));
                     VM_NEXT();
                 }
                 else if (ttisnumber(rb) && ttisvector(rc))
                 {
                     LUA_VECTOR_TYPE vb = cast_to(LUA_VECTOR_TYPE, nvalue(rb));
                     const LUA_VECTOR_TYPE* vc = vvalue(rc);
-                    setvvalue(L, ra, vb * vc[0], vb * vc[1], vb * vc[2], vb * vc[3]);
+                    setvvaluet(L, ra, vb * vc[0], vb * vc[1], vb * vc[2], vb * vc[3], vectortag(rc));
                     VM_NEXT();
                 }
                 else
@@ -1927,21 +1927,21 @@ reentry:
                 {
                     const LUA_VECTOR_TYPE* vb = vvalue(rb);
                     LUA_VECTOR_TYPE vc = cast_to(LUA_VECTOR_TYPE, nvalue(rc));
-                    setvvalue(L, ra, vb[0] / vc, vb[1] / vc, vb[2] / vc, vb[3] / vc);
+                    setvvaluet(L, ra, vb[0] / vc, vb[1] / vc, vb[2] / vc, vb[3] / vc, vectortag(rb));
                     VM_NEXT();
                 }
                 else if (ttisvector(rb) && ttisvector(rc))
                 {
                     const LUA_VECTOR_TYPE* vb = vvalue(rb);
                     const LUA_VECTOR_TYPE* vc = vvalue(rc);
-                    setvvalue(L, ra, vb[0] / vc[0], vb[1] / vc[1], vb[2] / vc[2], vb[3] / vc[3]);
+                    setvvaluet(L, ra, vb[0] / vc[0], vb[1] / vc[1], vb[2] / vc[2], vb[3] / vc[3], vectortag2(rb, rc));
                     VM_NEXT();
                 }
                 else if (ttisnumber(rb) && ttisvector(rc))
                 {
                     LUA_VECTOR_TYPE vb = cast_to(LUA_VECTOR_TYPE, nvalue(rb));
                     const LUA_VECTOR_TYPE* vc = vvalue(rc);
-                    setvvalue(L, ra, vb / vc[0], vb / vc[1], vb / vc[2], vb / vc[3]);
+                    setvvaluet(L, ra, vb / vc[0], vb / vc[1], vb / vc[2], vb / vc[3], vectortag(rc));
                     VM_NEXT();
                 }
                 else
@@ -1988,14 +1988,14 @@ reentry:
                 {
                     const LUA_VECTOR_TYPE* vb = vvalue(rb);
                     LUA_VECTOR_TYPE vc = cast_to(LUA_VECTOR_TYPE, nvalue(rc));
-                    setvvalue(
+                    setvvaluet(
                         L,
                         ra,
                         LUA_VECTOR_TYPE(luai_numidiv(vb[0], vc)),
                         LUA_VECTOR_TYPE(luai_numidiv(vb[1], vc)),
                         LUA_VECTOR_TYPE(luai_numidiv(vb[2], vc)),
                         LUA_VECTOR_TYPE(luai_numidiv(vb[3], vc))
-                    );
+                    , vectortag(rb));
                     VM_NEXT();
                 }
                 else
@@ -2128,7 +2128,7 @@ reentry:
                 {
                     const LUA_VECTOR_TYPE* vb = vvalue(rb);
                     LUA_VECTOR_TYPE vc = cast_to(LUA_VECTOR_TYPE, nvalue(kv));
-                    setvvalue(L, ra, vb[0] * vc, vb[1] * vc, vb[2] * vc, vb[3] * vc);
+                    setvvaluet(L, ra, vb[0] * vc, vb[1] * vc, vb[2] * vc, vb[3] * vc, vectortag(rb));
                     VM_NEXT();
                 }
                 else
@@ -2174,7 +2174,7 @@ reentry:
                 {
                     const LUA_VECTOR_TYPE* vb = vvalue(rb);
                     LUA_VECTOR_TYPE nc = cast_to(LUA_VECTOR_TYPE, nvalue(kv));
-                    setvvalue(L, ra, vb[0] / nc, vb[1] / nc, vb[2] / nc, vb[3] / nc);
+                    setvvaluet(L, ra, vb[0] / nc, vb[1] / nc, vb[2] / nc, vb[3] / nc, vectortag(rb));
                     VM_NEXT();
                 }
                 else
@@ -2220,14 +2220,14 @@ reentry:
                 {
                     const LUA_VECTOR_TYPE* vb = vvalue(rb);
                     LUA_VECTOR_TYPE vc = cast_to(LUA_VECTOR_TYPE, nvalue(kv));
-                    setvvalue(
+                    setvvaluet(
                         L,
                         ra,
                         LUA_VECTOR_TYPE(luai_numidiv(vb[0], vc)),
                         LUA_VECTOR_TYPE(luai_numidiv(vb[1], vc)),
                         LUA_VECTOR_TYPE(luai_numidiv(vb[2], vc)),
                         LUA_VECTOR_TYPE(luai_numidiv(vb[3], vc))
-                    );
+                    , vectortag(rb));
                     VM_NEXT();
                 }
                 else
@@ -2392,7 +2392,7 @@ reentry:
                 else if (ttisvector(rb))
                 {
                     const LUA_VECTOR_TYPE* vb = vvalue(rb);
-                    setvvalue(L, ra, -vb[0], -vb[1], -vb[2], -vb[3]);
+                    setvvaluet(L, ra, -vb[0], -vb[1], -vb[2], -vb[3], vectortag(rb));
                     VM_NEXT();
                 }
                 else
@@ -3131,7 +3131,7 @@ reentry:
                 {
                     LUA_VECTOR_TYPE nb = cast_to(LUA_VECTOR_TYPE, nvalue(kv));
                     const LUA_VECTOR_TYPE* vc = vvalue(rc);
-                    setvvalue(L, ra, nb / vc[0], nb / vc[1], nb / vc[2], nb / vc[3]);
+                    setvvaluet(L, ra, nb / vc[0], nb / vc[1], nb / vc[2], nb / vc[3], vectortag(rc));
                     VM_NEXT();
                 }
                 else

@@ -741,6 +741,15 @@ void lua_pushvector(lua_State* L, LUA_VECTOR_TYPE x, LUA_VECTOR_TYPE y, LUA_VECT
 }
 #endif
 
+#if LUA_VECTOR_KINDS
+void lua_pushvector2(lua_State* L, LUA_VECTOR_TYPE x, LUA_VECTOR_TYPE y)
+{
+    ensure_stack(L, 1);
+    setvvaluet(L, L->top, x, y, LUA_VECTOR_TYPE(0.0), LUA_VECTOR_TYPE(0.0), LUA_TVECTOR2);
+    api_incr_top(L);
+}
+#endif
+
 void lua_pushlstring(lua_State* L, const char* s, size_t len)
 {
     api_check(L, s != nullptr);

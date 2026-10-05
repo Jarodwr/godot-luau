@@ -74,7 +74,11 @@ typedef struct lua_TValue
 #define ttisthread(o) (ttype(o) == LUA_TTHREAD)
 #define ttisbuffer(o) (ttype(o) == LUA_TBUFFER)
 #define ttislightuserdata(o) (ttype(o) == LUA_TLIGHTUSERDATA)
+#if LUA_VECTOR_KINDS
+#define ttisvector(o) (ttype(o) == LUA_TVECTOR || ttype(o) == LUA_TVECTOR2)
+#else
 #define ttisvector(o) (ttype(o) == LUA_TVECTOR)
+#endif
 #define ttisupval(o) (ttype(o) == LUA_TUPVAL)
 #define ttisclass(o) (ttype(o) == LUA_TCLASS)
 #define ttisobject(o) (ttype(o) == LUA_TOBJECT)
@@ -508,6 +512,33 @@ typedef struct LuaNode
 } LuaNode;
 
 // copy a value into a key
+/*
+** Vector kinds (Godot fork, see GODOT.md). A result's vector type follows its
+** operands: 2D only when every vector operand is 2D. Without
+** LUA_VECTOR_KINDS these are plain LUA_TVECTOR and setvvalue.
+*/
+#if LUA_VECTOR_KINDS
+#define vectortag(o) ttype(o)
+#define vectortag2(a, b) ((ttype(a) == LUA_TVECTOR2 && ttype(b) == LUA_TVECTOR2) ? LUA_TVECTOR2 : LUA_TVECTOR)
+#define case_vector2 case LUA_TVECTOR2:
+#define vectorfields(o) (ttype(o) == LUA_TVECTOR2 ? 2u : unsigned(LUA_VECTOR_SIZE))
+// The tag is computed first: obj may be one of the operands it depends on
+// A 2D result's z is 0 whatever the operation gave (v2 / v2 would make it
+// NaN), so equality and hashing see the same z for every 2D vector
+#define setvvaluet(L, obj, x, y, z, w, tag) \
+    { \
+        int i_tag = (tag); \
+        setvvalue(L, obj, x, y, (i_tag == LUA_TVECTOR2 ? 0.0f : float(z)), w); \
+        (obj)->tt = i_tag; \
+    }
+#else
+#define vectortag(o) LUA_TVECTOR
+#define vectortag2(a, b) LUA_TVECTOR
+#define case_vector2
+#define vectorfields(o) unsigned(LUA_VECTOR_SIZE)
+#define setvvaluet(L, obj, x, y, z, w, tag) setvvalue(L, obj, x, y, z, w)
+#endif
+
 #define setnodekey(L, node, obj) \
     { \
         LuaNode* n_ = (node); \

@@ -420,7 +420,7 @@ void push_native(lua_State *L, ArgType type, NativeSlot &slot) {
 		case T_STRING_NAME: push_string_name(L, *reinterpret_cast<StringName *>(slot.bytes)); break;
 		case T_VECTOR2: {
 			const float *v = reinterpret_cast<float *>(slot.bytes);
-			lua_pushvector(L, v[0], v[1], 0.0f);
+			lua_pushvector2(L, v[0], v[1]);
 			break;
 		}
 		case T_VECTOR3: {
@@ -459,7 +459,7 @@ static bool call_variant(lua_State *L, GDExtensionObjectPtr object, GDExtensionM
 	}
 	VariantResult result;
 	GDExtensionCallError error;
-	call_with_vector_retry(L, first, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
+	call_with_args(L, first, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
 		gdextension_interface::object_method_bind_call(bind, object, args.pointers(), argc, r.uninitialized(), &e);
 	});
 	if (error.error != GDEXTENSION_CALL_OK) {
@@ -511,7 +511,7 @@ static bool to_simple(lua_State *L, int index, ArgType type, SimpleValue &r_valu
 
 static void push_simple(lua_State *L, ArgType type, const SimpleValue &value) {
 	switch (type) {
-		case T_VECTOR2: lua_pushvector(L, value.v[0], value.v[1], 0.0f); break;
+		case T_VECTOR2: lua_pushvector2(L, value.v[0], value.v[1]); break;
 		case T_VECTOR3: lua_pushvector(L, value.v[0], value.v[1], value.v[2]); break;
 		case T_FLOAT: lua_pushnumber(L, value.d); break;
 		case T_INT: push_int(L, value.i); break;
@@ -612,7 +612,7 @@ static bool generic_call(lua_State *L, Variant &object, const StringName &name, 
 	}
 	VariantResult result;
 	GDExtensionCallError error;
-	call_with_vector_retry(L, first, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
+	call_with_args(L, first, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
 		gdextension_interface::variant_call(object._native_ptr(), name._native_ptr(), args.pointers(), argc, r.uninitialized(), &e);
 	});
 	if (error.error != GDEXTENSION_CALL_OK) {
@@ -634,7 +634,7 @@ static bool fast_get(lua_State *L, GDExtensionObjectPtr object, const Method &ge
 		case T_VECTOR2: {
 			float v[2];
 			gdextension_interface::object_method_bind_ptrcall(getter.bind, object, nullptr, v);
-			lua_pushvector(L, v[0], v[1], 0.0f);
+			lua_pushvector2(L, v[0], v[1]);
 			return true;
 		}
 		case T_VECTOR3: {
@@ -905,15 +905,6 @@ const Variant *borrow_variant(lua_State *L, int index) {
 	return nullptr;
 }
 
-bool has_flat_vector(lua_State *L, int first, int count) {
-	for (int i = 0; i < count; i++) {
-		const float *v = lua_tovector(L, first + i);
-		if (v && v[2] == 0.0f) {
-			return true;
-		}
-	}
-	return false;
-}
 
 void push_result(lua_State *L, VariantResult &result) {
 	if (!result.constructed) {
@@ -1075,7 +1066,7 @@ static int variant_namecall(lua_State *L) {
 	{
 		VariantResult result;
 		GDExtensionCallError error;
-		call_with_vector_retry(L, 2, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
+		call_with_args(L, 2, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
 			gdextension_interface::variant_call(self->_native_ptr(), method._native_ptr(), args.pointers(), argc, r.uninitialized(), &e);
 		});
 		ok = error.error == GDEXTENSION_CALL_OK;
@@ -1103,14 +1094,8 @@ static int variant_operator(lua_State *L) {
 	GDExtensionBool valid = false;
 	{
 		VariantResult result;
-		// A vector with z = 0 is a Vector2 first, then a Vector3 if that's
-		// not a valid operation (Transform3D * Vector3(1, 0, 0))
-		for (int attempt = 0; attempt < 2 && !valid; attempt++) {
-			if (attempt == 1 && !has_flat_vector(L, 1, 2)) {
-				break;
-			}
+		{
 			VariantArgs operands;
-			operands.vectors_as_3 = attempt == 1;
 			operands.add(L, 1);
 			operands.add(L, 2);
 			gdextension_interface::variant_evaluate((GDExtensionVariantOperator)OP, operands.argv[0]->_native_ptr(), operands.argv[1]->_native_ptr(), result.uninitialized(), &valid);
@@ -1140,7 +1125,7 @@ static int variant_call_metamethod(lua_State *L) {
 	{
 		VariantResult result;
 		GDExtensionCallError error;
-		call_with_vector_retry(L, 2, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
+		call_with_args(L, 2, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
 			gdextension_interface::variant_call(self->_native_ptr(), call_name._native_ptr(), args.pointers(), argc, r.uninitialized(), &e);
 		});
 		ok = error.error == GDEXTENSION_CALL_OK;
@@ -1224,7 +1209,7 @@ bool push_plain_variant(lua_State *L, const Variant &value) {
 		case Variant::FLOAT: lua_pushnumber(L, *reinterpret_cast<const double *>(data)); return true;
 		case Variant::VECTOR2: {
 			const float *v = reinterpret_cast<const float *>(data);
-			lua_pushvector(L, v[0], v[1], 0.0f);
+			lua_pushvector2(L, v[0], v[1]);
 			return true;
 		}
 		case Variant::VECTOR3: {
@@ -1250,7 +1235,7 @@ bool push_plain_variant(lua_State *L, const Variant &value) {
 
 // Writes the value at `index` as a plain Variant into uninitialized `memory`;
 // false (nothing written) if it isn't one
-bool write_plain_variant(lua_State *L, int index, void *memory, bool vectors_as_3) {
+bool write_plain_variant(lua_State *L, int index, void *memory) {
 	if (!variant_bytes_ok) {
 		return false;
 	}
@@ -1281,17 +1266,21 @@ bool write_plain_variant(lua_State *L, int index, void *memory, bool vectors_as_
 			construct_string(L, index, data);  // straight into the Variant (docs/adr/0023)
 			type = Variant::STRING;
 			break;
+		case LUA_TVECTOR2: {
+			const float *v = lua_tovector(L, index);
+			float *out = reinterpret_cast<float *>(data);
+			out[0] = v[0];
+			out[1] = v[1];
+			type = Variant::VECTOR2;
+			break;
+		}
 		case LUA_TVECTOR: {
 			const float *v = lua_tovector(L, index);
 			float *out = reinterpret_cast<float *>(data);
 			out[0] = v[0];
 			out[1] = v[1];
-			if (v[2] == 0.0f && !vectors_as_3) {
-				type = Variant::VECTOR2;
-			} else {
-				type = Variant::VECTOR3;
-				out[2] = v[2];
-			}
+			out[2] = v[2];
+			type = Variant::VECTOR3;
 			break;
 		}
 		case LUA_TLIGHTUSERDATA: {
@@ -1330,7 +1319,7 @@ void push_variant(lua_State *L, const Variant &value) {
 		case Variant::STRING_NAME: push_string_name(L, (StringName)value); break;
 		case Variant::VECTOR2: {
 			Vector2 v = value;
-			lua_pushvector(L, v.x, v.y, 0.0f);
+			lua_pushvector2(L, v.x, v.y);
 			break;
 		}
 		case Variant::VECTOR3: {
@@ -1385,12 +1374,12 @@ Variant to_variant(lua_State *L, int index) {
 			}
 			return Variant();
 		}
-		case LUA_TVECTOR: {
-			// Open question: Vector2 and Vector3 share Luau's vector
+		case LUA_TVECTOR2: {
 			const float *v = lua_tovector(L, index);
-			if (v[2] == 0.0f) {
-				return Vector2(v[0], v[1]);
-			}
+			return Vector2(v[0], v[1]);
+		}
+		case LUA_TVECTOR: {
+			const float *v = lua_tovector(L, index);
 			return Vector3(v[0], v[1], v[2]);
 		}
 		case LUA_TUSERDATA: {
@@ -1461,7 +1450,7 @@ void write_result(lua_State *L, int index, Variant *r_dest, Variant::Type type) 
 		*reinterpret_cast<int32_t *>(bytes) = type;
 		return;
 	}
-	if (lua_t == LUA_TVECTOR && (type == Variant::VECTOR2 || type == Variant::VECTOR3)) {
+	if (is_vector(lua_t) && (type == Variant::VECTOR2 || type == Variant::VECTOR3)) {
 		const float *v = lua_tovector(L, index);
 		float *out = reinterpret_cast<float *>(bytes + VARIANT_DATA);
 		out[0] = v[0];

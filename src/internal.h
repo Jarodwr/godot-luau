@@ -109,9 +109,9 @@ struct NativeSlot {
 
 constexpr int MAX_VARIANT_ARGS = 16;
 
-// `vectors_as_3`: write vectors as Vector3 even when z = 0 (see
-// call_with_vector_retry)
-bool write_plain_variant(lua_State *L, int index, void *memory, bool vectors_as_3 = false);
+// A plain Lua value (nil, bool, number, vector, string, packed value) as
+// Variant bytes; false for anything else
+bool write_plain_variant(lua_State *L, int index, void *memory);
 // The Lua value at `index` into `*r_dest`, a Variant the engine owns (a
 // property read, a call's result), converted to `type` unless it's NIL.
 // When r_dest holds nil, plain values are written as bytes: godot-cpp's
@@ -128,7 +128,6 @@ struct VariantArgs {
 	const Variant *argv[MAX_VARIANT_ARGS];
 	int count = 0;
 	uint32_t borrowed = 0;  // bit i: argv[i] points into a userdata, not storage
-	bool vectors_as_3 = false;
 
 	VariantArgs() = default;
 	VariantArgs(const VariantArgs &) = delete;
@@ -150,7 +149,7 @@ struct VariantArgs {
 			return;
 		}
 		void *slot = storage[count];
-		if (!write_plain_variant(L, index, slot, vectors_as_3)) {
+		if (!write_plain_variant(L, index, slot)) {
 			new (slot) Variant(to_variant(L, index));
 		}
 		argv[count] = reinterpret_cast<const Variant *>(slot);
@@ -203,28 +202,21 @@ bool push_plain_variant(lua_State *L, const Variant &value);
 // becomes one; the result is left empty
 void push_result(lua_State *L, VariantResult &result);
 
-// Whether any of the Lua values [first, first + count) is a vector with z = 0
-bool has_flat_vector(lua_State *L, int first, int count);
-
 // Runs `call(args, result, error)` with the Lua values [first, first + argc)
-// as arguments. Vector2 and Vector3 share Luau's vector, so a vector with
-// z = 0 is passed as Vector2; if the call fails and there was one, it's
-// retried with vectors as Vector3 (e.g. Basis(Vector3(0, 1, 0), 0.5)).
+// as arguments. Vector2 and Vector3 are separate Luau types (the Godot fork,
+// docs/adr/0044), so each argument converts to exactly one Godot type.
 template <typename F>
-void call_with_vector_retry(lua_State *L, int first, int argc, VariantResult &result, GDExtensionCallError &error, F &&call) {
-	for (int attempt = 0; attempt < 2; attempt++) {
-		{
-			VariantArgs args;
-			args.vectors_as_3 = attempt == 1;
-			for (int i = 0; i < argc; i++) {
-				args.add(L, first + i);
-			}
-			call(args, result, error);
-		}
-		if (error.error == GDEXTENSION_CALL_OK || attempt == 1 || !has_flat_vector(L, first, argc)) {
-			return;
-		}
+void call_with_args(lua_State *L, int first, int argc, VariantResult &result, GDExtensionCallError &error, F &&call) {
+	VariantArgs args;
+	for (int i = 0; i < argc; i++) {
+		args.add(L, first + i);
 	}
+	call(args, result, error);
+}
+
+// Godot's Vector2 is Luau's 2D vector type (LUA_TVECTOR2), Vector3 the 3D one
+inline bool is_vector(int lua_type) {
+	return lua_type == LUA_TVECTOR || lua_type == LUA_TVECTOR2;
 }
 
 // Changes whenever the Luau state is closed: callables and other holders of

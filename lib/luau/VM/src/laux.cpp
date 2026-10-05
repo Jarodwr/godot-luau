@@ -635,13 +635,18 @@ const char* luaL_tolstring(lua_State* L, int idx, size_t* len)
         lua_pushlstring(L, s, e - s);
         break;
     }
-    case LUA_TVECTOR:
+    case_vector2 case LUA_TVECTOR:
     {
         const LUA_VECTOR_TYPE* v = lua_tovector(L, idx);
 
         char s[LUAI_MAXNUM2STR * LUA_VECTOR_SIZE];
         char* e = s;
-        for (int i = 0; i < LUA_VECTOR_SIZE; ++i)
+#if LUA_VECTOR_KINDS
+        int fields = lua_type(L, idx) == LUA_TVECTOR2 ? 2 : LUA_VECTOR_SIZE; // a 2D vector prints x, y
+#else
+        int fields = LUA_VECTOR_SIZE;
+#endif
+        for (int i = 0; i < fields; ++i)
         {
             if (i != 0)
             {

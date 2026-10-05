@@ -15,6 +15,8 @@ add_subdirectory(lib/godot-cpp EXCLUDE_FROM_ALL)
 
 set(LUAU_BUILD_CLI OFF CACHE BOOL "")
 set(LUAU_BUILD_TESTS OFF CACHE BOOL "")
+# Vector2 and Vector3 are separate Luau types (the Godot fork, lib/luau/GODOT.md)
+set(LUAU_VECTOR_KINDS ON CACHE BOOL "")
 add_subdirectory(lib/luau EXCLUDE_FROM_ALL)
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)

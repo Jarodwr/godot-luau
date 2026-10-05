@@ -194,6 +194,12 @@ unsigned int getCpuFeaturesX64()
 
 bool isSupported()
 {
+    // Godot fork (GODOT.md): native code writes vector results as LUA_TVECTOR
+    // and would lose the 2D kind, so with vector kinds everything stays in
+    // the interpreter
+    if (LUA_VECTOR_KINDS)
+        return false;
+
     if (LUA_EXTRA_SIZE != 1)
         return false;
 

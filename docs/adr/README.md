@@ -67,3 +67,4 @@ at the same optimisation level.
 | [0041](0041-table-conversion-in-place.md) | Lua tables to Arrays: one sequence check, elements written in place | Accepted |
 | [0042](0042-operator-dispatch-trimmed.md) | Operator dispatch fetches operands once; elementwise maths in fixed-width form | Accepted |
 | [0043](0043-opaque-64-bit-integers.md) | Integers beyond ±2^53 are opaque 64-bit values | Accepted |
+| [0044](0044-vector2-and-vector3-as-luau-types.md) | Vector2 and Vector3 are separate Luau types, through a Luau fork | Accepted |

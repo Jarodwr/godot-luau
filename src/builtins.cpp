@@ -378,7 +378,7 @@ bool call_builtin_method(lua_State *L, const Variant *self, int atom, int first,
 		case Variant::VECTOR2: {
 			float v[2] = {};
 			method.function(base, argv, v, argc);
-			lua_pushvector(L, v[0], v[1], 0.0f);
+			lua_pushvector2(L, v[0], v[1]);
 			return true;
 		}
 		case Variant::VECTOR3: {
@@ -515,7 +515,6 @@ const OperatorEntry &operator_entry(int op, int32_t left, int32_t right) {
 struct Operand {
 	int32_t type = -1;  // -1: not handled here
 	const void *pointer = nullptr;
-	bool flat_vector = false;
 	alignas(16) unsigned char storage[16];
 };
 
@@ -539,11 +538,11 @@ void classify(lua_State *L, int index, Operand &operand, int lua_t, const unsign
 			*reinterpret_cast<GDExtensionBool *>(operand.storage) = lua_toboolean(L, index);
 			operand.pointer = operand.storage;
 			return;
-		case LUA_TVECTOR: {
+		case LUA_TVECTOR:
+		case LUA_TVECTOR2: {
 			const float *v = lua_tovector(L, index);
 			memcpy(operand.storage, v, sizeof(float) * 3);
-			operand.flat_vector = v[2] == 0.0f;
-			operand.type = operand.flat_vector ? Variant::VECTOR2 : Variant::VECTOR3;
+			operand.type = lua_t == LUA_TVECTOR2 ? Variant::VECTOR2 : Variant::VECTOR3;
 			operand.pointer = operand.storage;
 			return;
 		}
@@ -794,12 +793,6 @@ bool call_validated_operator(lua_State *L, int op) {
 		return false;
 	}
 	const OperatorEntry *entry = &operator_entry(op, a.type, b.type);
-	// Vectors with z = 0: Vector2 first, else Vector3 (decided, not retried)
-	if (entry->function == nullptr && (a.flat_vector || b.flat_vector)) {
-		int32_t ta = a.flat_vector ? (int32_t)Variant::VECTOR3 : a.type;
-		int32_t tb = b.flat_vector ? (int32_t)Variant::VECTOR3 : b.type;
-		entry = &operator_entry(op, ta, tb);
-	}
 	if (entry->function == nullptr) {
 		return false;
 	}
@@ -826,7 +819,7 @@ bool call_validated_operator(lua_State *L, int op) {
 		case Variant::VECTOR2: {
 			float r[2] = {};
 			entry->function(a.pointer, b.pointer, r);
-			lua_pushvector(L, r[0], r[1], 0.0f);
+			lua_pushvector2(L, r[0], r[1]);
 			return true;
 		}
 		case Variant::VECTOR3: {
@@ -978,7 +971,7 @@ static int builtin_construct(lua_State *L) {
 	{
 		VariantResult result;
 		GDExtensionCallError error;
-		call_with_vector_retry(L, 2, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
+		call_with_args(L, 2, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
 			gdextension_interface::variant_construct((GDExtensionVariantType)type, r.uninitialized(), args.pointers(), argc, &e);
 		});
 		status = finish_call(L, result, error, type_name(type));
@@ -990,7 +983,7 @@ static int builtin_construct(lua_State *L) {
 }
 
 static int vector2_construct(lua_State *L) {
-	lua_pushvector(L, (float)luaL_optnumber(L, 2, 0), (float)luaL_optnumber(L, 3, 0), 0.0f);
+	lua_pushvector2(L, (float)luaL_optnumber(L, 2, 0), (float)luaL_optnumber(L, 3, 0));
 	return 1;
 }
 
@@ -1011,7 +1004,7 @@ static int builtin_static_call(lua_State *L) {
 	{
 		VariantResult result;
 		GDExtensionCallError error;
-		call_with_vector_retry(L, 1, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
+		call_with_args(L, 1, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
 			gdextension_interface::variant_call_static((GDExtensionVariantType)type, name->_native_ptr(), args.pointers(), argc, r.uninitialized(), &e);
 		});
 		status = finish_call(L, result, error, "static method");
@@ -1034,7 +1027,7 @@ static int builtin_method_call(lua_State *L) {
 	{
 		VariantResult result;
 		GDExtensionCallError error;
-		call_with_vector_retry(L, 1, argc + 1, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
+		call_with_args(L, 1, argc + 1, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
 			gdextension_interface::variant_call(const_cast<Variant *>(args.argv[0])->_native_ptr(), name->_native_ptr(), args.pointers() + 1, argc, r.uninitialized(), &e);
 		});
 		status = finish_call(L, result, error, "method");
@@ -1104,12 +1097,12 @@ static void register_builtin_types(lua_State *L) {
 	}
 }
 
-// ---------------------------------------------------------------- vector methods (ADR 0025)
+// ---------------------------------------------------------------- vector methods (ADR 0025, 0044)
 //
-// Vector2 and Vector3 are Luau vectors (Vector2 has z = 0). The common methods
-// run here in C with Godot's float maths; the rest go to the engine as
-// Vector2 when every vector involved has z = 0 and Vector2 has the method,
-// else as Vector3.
+// Vector2 and Vector3 are Luau's 2D and 3D vector types (the Godot fork), each
+// with its own metatable and methods. The common methods run here in C with
+// Godot's float maths (z is 0 in a 2D vector); the rest go to the engine as
+// the receiver's own type.
 
 namespace {
 
@@ -1121,8 +1114,13 @@ const float *check_vector(lua_State *L, int index) {
 	return v;
 }
 
+// A result of the receiver's (argument 1's) kind
 int push_vec(lua_State *L, float x, float y, float z) {
-	lua_pushvector(L, x, y, z);
+	if (lua_type(L, 1) == LUA_TVECTOR2) {
+		lua_pushvector2(L, x, y);
+	} else {
+		lua_pushvector(L, x, y, z);
+	}
 	return 1;
 }
 
@@ -1210,52 +1208,25 @@ int vec_round(lua_State *L) {
 	return push_vec(L, std::round(v[0]), std::round(v[1]), std::round(v[2]));
 }
 
-bool is_flat(const float *v) {
-	return v[2] == 0.0f;
-}
-
-// Any other method: through the engine, as Vector2 or Vector3
+// Any other method: through the engine, as the receiver's own type
 int vec_generic(lua_State *L) {
 	const StringName *name = (const StringName *)lua_tolightuserdata(L, lua_upvalueindex(1));
-	bool vector2_has = lua_toboolean(L, lua_upvalueindex(2));
 	int argc = lua_gettop(L) - 1;
 	if (argc < 0 || argc > MAX_VARIANT_ARGS) {
 		luaL_error(L, "call methods with ':'");
 	}
-	bool flat = vector2_has;
-	for (int i = 1; flat && i <= argc + 1; i++) {
-		const float *v = lua_tovector(L, i);
-		flat = v == nullptr || is_flat(v);
-	}
 	int status;
-	for (int attempt = 0;; attempt++) {
+	{
 		VariantResult result;
 		GDExtensionCallError error;
-		{
-			const float *v = check_vector(L, 1);
-			Variant self = flat ? Variant(Vector2(v[0], v[1])) : Variant(Vector3(v[0], v[1], v[2]));
-			VariantArgs args;
-			for (int i = 0; i < argc; i++) {
-				const float *a = lua_tovector(L, 2 + i);
-				if (a && !flat) {
-					// Vector arguments follow the receiver's type
-					new (args.storage[args.count]) Variant(Vector3(a[0], a[1], a[2]));
-					args.argv[args.count] = reinterpret_cast<const Variant *>(args.storage[args.count]);
-					args.count++;
-				} else {
-					args.add(L, 2 + i);
-				}
-			}
-			gdextension_interface::variant_call(self._native_ptr(), name->_native_ptr(), args.pointers(), argc, result.uninitialized(), &error);
+		const float *v = check_vector(L, 1);
+		Variant self = lua_type(L, 1) == LUA_TVECTOR2 ? Variant(Vector2(v[0], v[1])) : Variant(Vector3(v[0], v[1], v[2]));
+		VariantArgs args;
+		for (int i = 0; i < argc; i++) {
+			args.add(L, 2 + i);
 		}
-		// Called as Vector2 but not valid as one (e.g. rotated(axis, angle)):
-		// try as Vector3
-		if (error.error != GDEXTENSION_CALL_OK && flat && attempt == 0) {
-			flat = false;
-			continue;
-		}
+		gdextension_interface::variant_call(self._native_ptr(), name->_native_ptr(), args.pointers(), argc, result.uninitialized(), &error);
 		status = finish_call(L, result, error, "vector method");
-		break;
 	}
 	if (status < 0) {
 		lua_error(L);
@@ -1263,25 +1234,19 @@ int vec_generic(lua_State *L) {
 	return status;
 }
 
-// Unknown names on the vector methods table
+// Unknown names on a vector type's methods table (upvalue: "Vector2" or "Vector3")
 int vec_methods_index(lua_State *L) {
 	if (lua_type(L, 2) != LUA_TSTRING) {
 		return 0;
 	}
+	const char *type = lua_tostring(L, lua_upvalueindex(1));
 	const char *key = lua_tostring(L, 2);
-	const BuiltinMember *v2 = find_builtin_member("Vector2", key);
-	const BuiltinMember *v3 = find_builtin_member("Vector3", key);
-	bool v2_method = v2 && v2->kind == B_METHOD;
-	bool v3_method = v3 && v3->kind == B_METHOD;
-	if (!v2_method && !v3_method) {
+	const BuiltinMember *member = find_builtin_member(type, key);
+	if (member == nullptr || member->kind != B_METHOD) {
 		return 0;
 	}
-	// cross differs in kind (Vector2: a number, Vector3: a vector) and can't be
-	// told apart when z = 0: it's always Vector3's, whose .z is the 2D result
-	bool as_vector2 = v2_method && strcmp(key, "cross") != 0;
 	lua_pushlightuserdata(L, (void *)hold_name(key));
-	lua_pushboolean(L, as_vector2);
-	lua_pushcclosurek(L, vec_generic, key, 2, nullptr);
+	lua_pushcclosurek(L, vec_generic, key, 1, nullptr);
 	lua_pushvalue(L, 2);
 	lua_pushvalue(L, -2);
 	lua_rawset(L, 1);
@@ -1290,7 +1255,8 @@ int vec_methods_index(lua_State *L) {
 
 } // namespace
 
-static void register_vector_methods(lua_State *L) {
+// The metatable of one vector type: its methods table as __index
+static void register_vector_type(lua_State *L, const char *type, bool is2d) {
 	lua_newtable(L);  // methods
 	const luaL_Reg fast[] = {
 		{ "length", vec_length }, { "length_squared", vec_length_squared }, { "normalized", vec_normalized },
@@ -1303,17 +1269,27 @@ static void register_vector_methods(lua_State *L) {
 		lua_setfield(L, -2, r->name);
 	}
 	lua_newtable(L);
-	lua_pushcfunction(L, vec_methods_index, "__index");
+	lua_pushstring(L, type);
+	lua_pushcclosurek(L, vec_methods_index, "__index", 1, nullptr);
 	lua_setfield(L, -2, "__index");
 	lua_setmetatable(L, -2);
 
-	lua_newtable(L);  // the vector type's metatable
+	lua_newtable(L);  // the type's metatable
 	lua_insert(L, -2);
 	lua_setfield(L, -2, "__index");
-	lua_pushvector(L, 0, 0, 0);
+	if (is2d) {
+		lua_pushvector2(L, 0, 0);
+	} else {
+		lua_pushvector(L, 0, 0, 0);
+	}
 	lua_insert(L, -2);
 	lua_setmetatable(L, -2);
 	lua_pop(L, 1);
+}
+
+static void register_vector_methods(lua_State *L) {
+	register_vector_type(L, "Vector2", true);
+	register_vector_type(L, "Vector3", false);
 }
 
 // ---------------------------------------------------------------- Godot String methods on Lua strings
@@ -1328,7 +1304,7 @@ static int string_method_call(lua_State *L) {
 	{
 		VariantResult result;
 		GDExtensionCallError error;
-		call_with_vector_retry(L, 1, argc + 1, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
+		call_with_args(L, 1, argc + 1, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
 			gdextension_interface::variant_call(const_cast<Variant *>(args.argv[0])->_native_ptr(), name->_native_ptr(), args.pointers() + 1, argc, r.uninitialized(), &e);
 		});
 		status = finish_call(L, result, error, "String method");
@@ -1536,7 +1512,7 @@ static bool fast_utility(lua_State *L, const UtilityInfo &info, GDExtensionPtrUt
 			case T_VARIANT:
 				// Numbers, booleans, nil and vectors as Variant bytes (nothing to
 				// destroy); anything else takes the general path
-				if (lt != LUA_TNUMBER && lt != LUA_TBOOLEAN && lt != LUA_TNIL && lt != LUA_TVECTOR) return false;
+				if (lt != LUA_TNUMBER && lt != LUA_TBOOLEAN && lt != LUA_TNIL && !is_vector(lt)) return false;
 				if (!write_plain_variant(L, 1 + i, slot)) return false;
 				break;
 			default:
@@ -1911,7 +1887,7 @@ int packed_method_call(lua_State *L) {
 	{
 		VariantResult result;
 		GDExtensionCallError error;
-		call_with_vector_retry(L, 2, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
+		call_with_args(L, 2, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
 			gdextension_interface::variant_call(const_cast<Variant *>(value)->_native_ptr(), atom_name(atom)._native_ptr(), args.pointers(), argc, r.uninitialized(), &e);
 		});
 		status = finish_call(L, result, error, "method");

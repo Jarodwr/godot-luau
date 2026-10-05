@@ -216,7 +216,7 @@ static LuaNode* mainposition(const LuaTable* t, const TValue* key)
         return hashnum(t, nvalue(key));
     case LUA_TINTEGER:
         return hashint(t, lvalue(key));
-    case LUA_TVECTOR:
+    case_vector2 case LUA_TVECTOR:
         return hashvec(t, vvalue(key));
     case LUA_TSTRING:
         return hashstr(t, tsvalue(key));
@@ -1277,8 +1277,8 @@ const TValue* luaH_get(LuaTable* t, const TValue* key)
         }
         case LUA_TINTEGER:
             return chainsearchtagged<LUA_TINTEGER>(t, lvalue(key), LUA_TINTEGER);
-        case LUA_TVECTOR:
-            return chainsearchtagged<LUA_TVECTOR>(t, (const LUA_VECTOR_TYPE*)vvalue(key), LUA_TVECTOR);
+        case_vector2 case LUA_TVECTOR:
+            return chainsearchtagged<LUA_TVECTOR>(t, (const LUA_VECTOR_TYPE*)vvalue(key), vectortag(key));
         case LUA_TSTRING:
             return luaH_getstr(t, tsvalue(key));
         default:
@@ -1358,7 +1358,7 @@ TValue* luaH_newkey(lua_State* L, LuaTable* t, const TValue* key)
         }
         case LUA_TINTEGER:
             return newkeytagged<LUA_TINTEGER, false>(L, t, key, lvalue(key), -1);
-        case LUA_TVECTOR:
+        case_vector2 case LUA_TVECTOR:
             if (luai_vecisnan(vvalue(key)))
                 luaG_runerror(L, "table index contains NaN");
 

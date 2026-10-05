@@ -8,6 +8,14 @@
 #include <limits>
 #include <math.h>
 
+// Godot fork (GODOT.md): with vector kinds, a two-component constructor call
+// isn't folded (a constant has no 2D kind); the fast call builds it instead
+#ifdef LUA_VECTOR_KINDS
+static constexpr bool kVectorKinds = LUA_VECTOR_KINDS;
+#else
+static constexpr bool kVectorKinds = false;
+#endif
+
 namespace Luau
 {
 namespace Compile
@@ -609,7 +617,7 @@ Constant foldBuiltin(AstNameTable& stringTable, int bfid, const Constant* args, 
             }
             else
             {
-                if (count == 2)
+                if (count == 2 && !kVectorKinds)
                     return cvectorf(float(args[0].valueNumber), float(args[1].valueNumber), 0.0f, 0.0f);
                 else if (count == 3 && args[2].type == Constant::Type_Number)
                     return cvectorf(float(args[0].valueNumber), float(args[1].valueNumber), float(args[2].valueNumber), 0.0f);

@@ -460,7 +460,7 @@ int luaV_equalval(lua_State* L, const TValue* t1, const TValue* t2)
         return luai_numeq(nvalue(t1), nvalue(t2));
     case LUA_TINTEGER:
         return luai_inteq(lvalue(t1), lvalue(t2));
-    case LUA_TVECTOR:
+    case_vector2 case LUA_TVECTOR:
         return luai_veceq(vvalue(t1), vvalue(t2));
     case LUA_TBOOLEAN:
         return bvalue(t1) == bvalue(t2); // true must be 1 !!
@@ -579,29 +579,29 @@ void luaV_doarithimpl(lua_State* L, StkId ra, const TValue* rb, const TValue* rc
         switch (op)
         {
         case TM_ADD:
-            setvvalue(L, ra, vb[0] + vc[0], vb[1] + vc[1], vb[2] + vc[2], vb[3] + vc[3]);
+            setvvaluet(L, ra, vb[0] + vc[0], vb[1] + vc[1], vb[2] + vc[2], vb[3] + vc[3], vectortag2(rb, rc));
             return;
         case TM_SUB:
-            setvvalue(L, ra, vb[0] - vc[0], vb[1] - vc[1], vb[2] - vc[2], vb[3] - vc[3]);
+            setvvaluet(L, ra, vb[0] - vc[0], vb[1] - vc[1], vb[2] - vc[2], vb[3] - vc[3], vectortag2(rb, rc));
             return;
         case TM_MUL:
-            setvvalue(L, ra, vb[0] * vc[0], vb[1] * vc[1], vb[2] * vc[2], vb[3] * vc[3]);
+            setvvaluet(L, ra, vb[0] * vc[0], vb[1] * vc[1], vb[2] * vc[2], vb[3] * vc[3], vectortag2(rb, rc));
             return;
         case TM_DIV:
-            setvvalue(L, ra, vb[0] / vc[0], vb[1] / vc[1], vb[2] / vc[2], vb[3] / vc[3]);
+            setvvaluet(L, ra, vb[0] / vc[0], vb[1] / vc[1], vb[2] / vc[2], vb[3] / vc[3], vectortag2(rb, rc));
             return;
         case TM_IDIV:
-            setvvalue(
+            setvvaluet(
                 L,
                 ra,
                 LUA_VECTOR_TYPE(luai_numidiv(vb[0], vc[0])),
                 LUA_VECTOR_TYPE(luai_numidiv(vb[1], vc[1])),
                 LUA_VECTOR_TYPE(luai_numidiv(vb[2], vc[2])),
                 LUA_VECTOR_TYPE(luai_numidiv(vb[3], vc[3]))
-            );
+            , vectortag2(rb, rc));
             return;
         case TM_UNM:
-            setvvalue(L, ra, -vb[0], -vb[1], -vb[2], -vb[3]);
+            setvvaluet(L, ra, -vb[0], -vb[1], -vb[2], -vb[3], vectortag(rb));
             return;
         default:
             break;
@@ -618,20 +618,20 @@ void luaV_doarithimpl(lua_State* L, StkId ra, const TValue* rb, const TValue* rc
             switch (op)
             {
             case TM_MUL:
-                setvvalue(L, ra, vb[0] * nc, vb[1] * nc, vb[2] * nc, vb[3] * nc);
+                setvvaluet(L, ra, vb[0] * nc, vb[1] * nc, vb[2] * nc, vb[3] * nc, vectortag(rb));
                 return;
             case TM_DIV:
-                setvvalue(L, ra, vb[0] / nc, vb[1] / nc, vb[2] / nc, vb[3] / nc);
+                setvvaluet(L, ra, vb[0] / nc, vb[1] / nc, vb[2] / nc, vb[3] / nc, vectortag(rb));
                 return;
             case TM_IDIV:
-                setvvalue(
+                setvvaluet(
                     L,
                     ra,
                     LUA_VECTOR_TYPE(luai_numidiv(vb[0], nc)),
                     LUA_VECTOR_TYPE(luai_numidiv(vb[1], nc)),
                     LUA_VECTOR_TYPE(luai_numidiv(vb[2], nc)),
                     LUA_VECTOR_TYPE(luai_numidiv(vb[3], nc))
-                );
+                , vectortag(rb));
                 return;
             default:
                 break;
@@ -649,20 +649,20 @@ void luaV_doarithimpl(lua_State* L, StkId ra, const TValue* rb, const TValue* rc
             switch (op)
             {
             case TM_MUL:
-                setvvalue(L, ra, nb * vc[0], nb * vc[1], nb * vc[2], nb * vc[3]);
+                setvvaluet(L, ra, nb * vc[0], nb * vc[1], nb * vc[2], nb * vc[3], vectortag(rc));
                 return;
             case TM_DIV:
-                setvvalue(L, ra, nb / vc[0], nb / vc[1], nb / vc[2], nb / vc[3]);
+                setvvaluet(L, ra, nb / vc[0], nb / vc[1], nb / vc[2], nb / vc[3], vectortag(rc));
                 return;
             case TM_IDIV:
-                setvvalue(
+                setvvaluet(
                     L,
                     ra,
                     LUA_VECTOR_TYPE(luai_numidiv(nb, vc[0])),
                     LUA_VECTOR_TYPE(luai_numidiv(nb, vc[1])),
                     LUA_VECTOR_TYPE(luai_numidiv(nb, vc[2])),
                     LUA_VECTOR_TYPE(luai_numidiv(nb, vc[3]))
-                );
+                , vectortag(rc));
                 return;
             default:
                 break;

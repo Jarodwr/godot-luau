@@ -83,6 +83,9 @@ enum lua_Type
     // When vector components are 'float', vector fits into the TValue
 #if LUA_VECTOR_DOUBLE == 0
     LUA_TVECTOR,
+#if LUA_VECTOR_KINDS
+    LUA_TVECTOR2, // a vector built from two components (Godot fork, see GODOT.md)
+#endif
 #endif
 
     LUA_TSTRING, // all types above this must be value types, all types below this must be GC types - see iscollectable
@@ -204,6 +207,9 @@ LUA_API void lua_pushunsigned(lua_State* L, unsigned n);
 LUA_API void lua_pushvector(lua_State* L, LUA_VECTOR_TYPE x, LUA_VECTOR_TYPE y, LUA_VECTOR_TYPE z, LUA_VECTOR_TYPE w);
 #else
 LUA_API void lua_pushvector(lua_State* L, LUA_VECTOR_TYPE x, LUA_VECTOR_TYPE y, LUA_VECTOR_TYPE z);
+#endif
+#if LUA_VECTOR_KINDS
+LUA_API void lua_pushvector2(lua_State* L, LUA_VECTOR_TYPE x, LUA_VECTOR_TYPE y); // a LUA_TVECTOR2
 #endif
 LUA_API void lua_pushlstring(lua_State* L, const char* s, size_t l);
 LUA_API void lua_pushstring(lua_State* L, const char* s);
@@ -515,7 +521,11 @@ LUA_API int lua_unref(lua_State* L, int ref);
 #define lua_isnil(L, n) (lua_type(L, (n)) == LUA_TNIL)
 #define lua_isboolean(L, n) (lua_type(L, (n)) == LUA_TBOOLEAN)
 #define lua_isinteger64(L, n) (lua_type(L, (n)) == LUA_TINTEGER)
+#if LUA_VECTOR_KINDS
+#define lua_isvector(L, n) (lua_type(L, (n)) == LUA_TVECTOR || lua_type(L, (n)) == LUA_TVECTOR2)
+#else
 #define lua_isvector(L, n) (lua_type(L, (n)) == LUA_TVECTOR)
+#endif
 #define lua_isthread(L, n) (lua_type(L, (n)) == LUA_TTHREAD)
 #define lua_isbuffer(L, n) (lua_type(L, (n)) == LUA_TBUFFER)
 #define lua_isnone(L, n) (lua_type(L, (n)) == LUA_TNONE)

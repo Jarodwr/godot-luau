@@ -7,6 +7,21 @@
 
 #include <math.h>
 
+#if LUA_VECTOR_SIZE == 3
+// Godot fork (GODOT.md): a result has the kind of the vector argument at `like`
+static void pushvectorlike(lua_State* L, int like, LUA_VECTOR_TYPE x, LUA_VECTOR_TYPE y, LUA_VECTOR_TYPE z)
+{
+#if LUA_VECTOR_KINDS
+    if (lua_type(L, like) == LUA_TVECTOR2)
+    {
+        lua_pushvector2(L, x, y);
+        return;
+    }
+#endif
+    lua_pushvector(L, x, y, z);
+}
+#endif
+
 static int vector_create(lua_State* L)
 {
     // checking argument count to avoid accepting 'nil' as a valid value
@@ -21,6 +36,11 @@ static int vector_create(lua_State* L)
 
     lua_pushvector(L, LUA_VECTOR_TYPE(x), LUA_VECTOR_TYPE(y), LUA_VECTOR_TYPE(z), LUA_VECTOR_TYPE(w));
 #else
+#if LUA_VECTOR_KINDS
+    if (count == 2)
+        lua_pushvector2(L, LUA_VECTOR_TYPE(x), LUA_VECTOR_TYPE(y)); // Godot fork (GODOT.md)
+    else
+#endif
     lua_pushvector(L, LUA_VECTOR_TYPE(x), LUA_VECTOR_TYPE(y), LUA_VECTOR_TYPE(z));
 #endif
 
@@ -51,7 +71,7 @@ static int vector_normalize(lua_State* L)
 #else
     LUA_VECTOR_TYPE invSqrt = LUA_VECTOR_TYPE(1.0) / luai_sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
 
-    lua_pushvector(L, v[0] * invSqrt, v[1] * invSqrt, v[2] * invSqrt);
+    pushvectorlike(L, 1, v[0] * invSqrt, v[1] * invSqrt, v[2] * invSqrt);
 #endif
 
     return 1;
@@ -115,7 +135,7 @@ static int vector_floor(lua_State* L)
 #if LUA_VECTOR_SIZE == 4
     lua_pushvector(L, luai_floor(v[0]), luai_floor(v[1]), luai_floor(v[2]), luai_floor(v[3]));
 #else
-    lua_pushvector(L, luai_floor(v[0]), luai_floor(v[1]), luai_floor(v[2]));
+    pushvectorlike(L, 1, luai_floor(v[0]), luai_floor(v[1]), luai_floor(v[2]));
 #endif
 
     return 1;
@@ -128,7 +148,7 @@ static int vector_ceil(lua_State* L)
 #if LUA_VECTOR_SIZE == 4
     lua_pushvector(L, luai_ceil(v[0]), luai_ceil(v[1]), luai_ceil(v[2]), luai_ceil(v[3]));
 #else
-    lua_pushvector(L, luai_ceil(v[0]), luai_ceil(v[1]), luai_ceil(v[2]));
+    pushvectorlike(L, 1, luai_ceil(v[0]), luai_ceil(v[1]), luai_ceil(v[2]));
 #endif
 
     return 1;
@@ -141,7 +161,7 @@ static int vector_abs(lua_State* L)
 #if LUA_VECTOR_SIZE == 4
     lua_pushvector(L, luai_fabs(v[0]), luai_fabs(v[1]), luai_fabs(v[2]), luai_fabs(v[3]));
 #else
-    lua_pushvector(L, luai_fabs(v[0]), luai_fabs(v[1]), luai_fabs(v[2]));
+    pushvectorlike(L, 1, luai_fabs(v[0]), luai_fabs(v[1]), luai_fabs(v[2]));
 #endif
 
     return 1;
@@ -154,7 +174,7 @@ static int vector_sign(lua_State* L)
 #if LUA_VECTOR_SIZE == 4
     lua_pushvector(L, luai_sign(v[0]), luai_sign(v[1]), luai_sign(v[2]), luai_sign(v[3]));
 #else
-    lua_pushvector(L, luai_sign(v[0]), luai_sign(v[1]), luai_sign(v[2]));
+    pushvectorlike(L, 1, luai_sign(v[0]), luai_sign(v[1]), luai_sign(v[2]));
 #endif
 
     return 1;
@@ -175,7 +195,7 @@ static int vector_clamp(lua_State* L)
         L, luai_clamp(v[0], min[0], max[0]), luai_clamp(v[1], min[1], max[1]), luai_clamp(v[2], min[2], max[2]), luai_clamp(v[3], min[3], max[3])
     );
 #else
-    lua_pushvector(L, luai_clamp(v[0], min[0], max[0]), luai_clamp(v[1], min[1], max[1]), luai_clamp(v[2], min[2], max[2]));
+    pushvectorlike(L, 1, luai_clamp(v[0], min[0], max[0]), luai_clamp(v[1], min[1], max[1]), luai_clamp(v[2], min[2], max[2]));
 #endif
 
     return 1;
@@ -211,7 +231,7 @@ static int vector_min(lua_State* L)
 #if LUA_VECTOR_SIZE == 4
     lua_pushvector(L, result[0], result[1], result[2], result[3]);
 #else
-    lua_pushvector(L, result[0], result[1], result[2]);
+    pushvectorlike(L, 1, result[0], result[1], result[2]);
 #endif
 
     return 1;
@@ -247,7 +267,7 @@ static int vector_max(lua_State* L)
 #if LUA_VECTOR_SIZE == 4
     lua_pushvector(L, result[0], result[1], result[2], result[3]);
 #else
-    lua_pushvector(L, result[0], result[1], result[2]);
+    pushvectorlike(L, 1, result[0], result[1], result[2]);
 #endif
 
     return 1;
@@ -270,7 +290,12 @@ static int vector_index(lua_State* L)
             ic = 3;
 #endif
 
-        if (unsigned(ic) < LUA_VECTOR_SIZE)
+#if LUA_VECTOR_KINDS
+        unsigned fields = lua_type(L, 1) == LUA_TVECTOR2 ? 2u : unsigned(LUA_VECTOR_SIZE); // Godot fork (GODOT.md)
+#else
+        unsigned fields = LUA_VECTOR_SIZE;
+#endif
+        if (unsigned(ic) < fields)
         {
             lua_pushnumber(L, v[ic]);
             return 1;
@@ -289,7 +314,7 @@ static int vector_lerp(lua_State* L)
 #if LUA_VECTOR_SIZE == 4
     lua_pushvector(L, luai_lerp(a[0], b[0], t), luai_lerp(a[1], b[1], t), luai_lerp(a[2], b[2], t), luai_lerp(a[3], b[3], t));
 #else
-    lua_pushvector(L, luai_lerp(a[0], b[0], t), luai_lerp(a[1], b[1], t), luai_lerp(a[2], b[2], t));
+    pushvectorlike(L, 1, luai_lerp(a[0], b[0], t), luai_lerp(a[1], b[1], t), luai_lerp(a[2], b[2], t));
 #endif
 
     return 1;
@@ -327,6 +352,14 @@ static void createmetatable(lua_State* L)
     lua_pushvalue(L, -2);
     lua_setmetatable(L, -2); // set vector metatable
     lua_pop(L, 1);           // pop dummy vector
+
+#if LUA_VECTOR_KINDS
+    // Godot fork (GODOT.md): 2D vectors get the same metatable
+    lua_pushvector2(L, 0.0, 0.0);
+    lua_pushvalue(L, -2);
+    lua_setmetatable(L, -2);
+    lua_pop(L, 1);
+#endif
 
     lua_pushcfunction(L, vector_index, nullptr);
     lua_setfield(L, -2, "__index");

@@ -17,6 +17,7 @@ option(LUAU_BUILD_SHARED "Build as a shared library" OFF)
 # Compile time options for Luau features
 option(LUAU_VECTOR_DOUBLE "Use 64-bit doubles for vector components" OFF)
 option(LUAU_VECTOR_FOUR_WIDE "Enable 4-wide mode for vectors, adding a 'w' component" OFF)
+option(LUAU_VECTOR_KINDS "Godot fork: 2-component vectors are a separate type, LUA_TVECTOR2 (see GODOT.md)" OFF)
 
 if(LUAU_BUILD_SHARED AND NOT LUAU_EXTERN_C)
     message(FATAL_ERROR "LUAU_BUILD_SHARED requires LUAU_EXTERN_C to be ON")
@@ -225,6 +226,11 @@ endif()
 
 if(LUAU_VECTOR_FOUR_WIDE)
     target_compile_definitions(Luau.VM PUBLIC "LUA_VECTOR_SIZE=4")
+endif()
+
+if(LUAU_VECTOR_KINDS)
+    target_compile_definitions(Luau.VM PUBLIC "LUA_VECTOR_KINDS=1")
+    target_compile_definitions(Luau.Compiler PUBLIC "LUA_VECTOR_KINDS=1")
 endif()
 
 if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND MSVC_VERSION GREATER_EQUAL 1924)

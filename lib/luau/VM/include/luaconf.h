@@ -137,8 +137,19 @@
 #define LUA_VECTOR_SIZE 3 // must be 3 or 4
 #endif
 
+// Vector kinds (Godot fork, see GODOT.md): vectors built from two components
+// are a separate type, LUA_TVECTOR2, so a host can tell 2D from 3D vectors.
+// Off by default: with 0, everything below behaves as upstream.
+#ifndef LUA_VECTOR_KINDS
+#define LUA_VECTOR_KINDS 0
+#endif
+
 #ifndef LUA_VECTOR_DOUBLE
 #define LUA_VECTOR_DOUBLE 0
+#endif
+
+#if LUA_VECTOR_KINDS && (LUA_VECTOR_DOUBLE || LUA_VECTOR_SIZE != 3)
+#error "LUA_VECTOR_KINDS needs 3-wide float vectors"
 #endif
 
 #if LUA_VECTOR_DOUBLE == 1

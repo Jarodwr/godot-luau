@@ -24,7 +24,6 @@ static functions and the remaining overrides ([ADR 0039](../docs/adr/0039-static
 ## API surface
 
 - [Integers and floats](integer-types.md)
-- [Vector2 vs Vector3 in untyped contexts](vector2-vector3-ambiguity.md)
 
 ## Editor and tooling
 
