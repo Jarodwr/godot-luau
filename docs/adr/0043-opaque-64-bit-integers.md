@@ -41,7 +41,11 @@ Options considered:
 - **What opaque values do:**
   - compare with each other: `==` (exact, Luau's own), `<`, `<=`;
   - work as table keys;
-  - print all their digits (`tostring`, `print`, `..`);
+  - print all their digits: `tostring`, `print`, `..`, string
+    interpolation, and `string.format`'s `%*` and `%s`. Luau's `%s` only
+    takes strings and numbers, so the bindings wrap `string.format`: a `%s`
+    argument that isn't one goes through `tostring`, as `%*` does. That also
+    lets Godot objects and other values print with `%s`.
   - go back to Godot as the exact int, wherever an int or a Variant is
     accepted;
   - `typeof` gives `"int64"`.

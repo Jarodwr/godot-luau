@@ -64,6 +64,7 @@ func _initialize() -> void:
 		check(big.get(key) == true, "64-bit ints: " + key)
 	check(big.less == (id1 < id2), "64-bit ints order as Godot's ints do")
 	check(big.text == str(id1) and big.concat == "id " + str(id1), "64-bit ints print all their digits (%s)" % big.text)
+	check(big.format == "%s|   ab|(1, 2)|7%%" % str(id1), "string.format's %%s takes any value (%s)" % big.format)
 	check(a.get_meta("big_id") == id1, "a 64-bit int stored from Lua is exact in Godot")
 
 	# Table conversions: arrays sized and written in place (ADR 0041)

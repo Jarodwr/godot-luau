@@ -42,6 +42,7 @@ function Checks:int64_checks()
 		less = id < id2,
 		text = tostring(id),
 		concat = "id " .. id,
+		format = string.format("%s|%5s|%*|%d%%", id, "ab", Vector2i(1, 2), 7),
 		arith_error = not pcall(function() return id + 1 end),
 		mixed_compare_error = not pcall(function() return id < 5 end),
 		small_is_number = type(self:get_instance_id()) == "number",

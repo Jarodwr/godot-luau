@@ -1501,6 +1501,52 @@ static int print(lua_State *L) {
 }
 
 // string:length(): number of characters, like Godot's String.length()
+// string.format, with %s taking any value through tostring as %* does:
+// Godot objects, 64-bit ids (docs/adr/0043) and other userdata print instead
+// of failing with "string expected". The rest is Luau's own format.
+static int string_format(lua_State *L) {
+	size_t length;
+	const char *format = luaL_checklstring(L, 1, &length);
+	int top = lua_gettop(L);
+	int arg = 1;
+	for (size_t i = 0; i < length; i++) {
+		if (format[i] != '%') {
+			continue;
+		}
+		if (++i >= length) {
+			break;
+		}
+		if (format[i] == '%') {
+			continue;
+		}
+		if (format[i] == '*') {
+			arg++;
+			continue;
+		}
+		while (i < length && strchr("-+ #0", format[i])) i++;
+		while (i < length && format[i] >= '0' && format[i] <= '9') i++;
+		if (i < length && format[i] == '.') {
+			i++;
+			while (i < length && format[i] >= '0' && format[i] <= '9') i++;
+		}
+		if (i >= length) {
+			break;
+		}
+		arg++;
+		if (format[i] == 's' && arg <= top) {
+			int type = lua_type(L, arg);
+			if (type != LUA_TSTRING && type != LUA_TNUMBER) {
+				luaL_tolstring(L, arg, nullptr);
+				lua_replace(L, arg);
+			}
+		}
+	}
+	lua_pushvalue(L, lua_upvalueindex(1));
+	lua_insert(L, 1);
+	lua_call(L, top, 1);
+	return 1;
+}
+
 static int string_length(lua_State *L) {
 	size_t length;
 	const char *s = luaL_checklstring(L, 1, &length);
@@ -1578,6 +1624,9 @@ void register_globals(lua_State *L) {
 	lua_getglobal(L, "string");
 	lua_pushcfunction(L, string_length, "length");
 	lua_setfield(L, -2, "length");
+	lua_getfield(L, -1, "format");  // Luau's, as the wrapper's upvalue
+	lua_pushcclosurek(L, string_format, "format", 1, nullptr);
+	lua_setfield(L, -2, "format");
 	lua_pop(L, 1);
 
 	register_builtins(L);
