@@ -40,6 +40,7 @@ public:
 	int class_ref = LUA_NOREF;     // the table the script returned
 
 	// ---- Declarations, read once when the script loads (docs/adr/0032)
+	struct MethodDef;
 	struct PropertyDef {
 		StringName name;
 		Variant::Type type = Variant::NIL;  // NIL: any
@@ -50,7 +51,11 @@ public:
 		bool has_default = false;
 		bool exported = false;              // shown in the inspector and saved
 		StringName getter, setter;          // script methods; empty: a plain field
-		bool has_accessors() const { return !getter.is_empty() || !setter.is_empty(); }
+		// Resolved when the script loads: godot-cpp's StringName::is_empty is
+		// an engine call, too slow for every property access
+		bool accessors = false;
+		const MethodDef *getter_method = nullptr, *setter_method = nullptr;
+		bool has_accessors() const { return accessors; }
 	};
 	struct SignalDef {
 		StringName name;
@@ -70,7 +75,7 @@ public:
 		Vector<Variant::Type> arg_types;
 	};
 	Vector<PropertyDef> properties;  // inspector order
-	HashMap<StringName, int> property_index;
+	HashMap<const void *, int> property_index;  // by name pointer, as methods
 	Vector<SignalDef> signals;
 	HashMap<StringName, int> signal_index;
 	HashMap<StringName, MethodDef> methods;
@@ -89,7 +94,7 @@ public:
 	void ensure_static_instance();
 
 	const PropertyDef *find_property(const StringName &name) const {
-		const int *index = property_index.getptr(name);
+		const int *index = property_index.getptr(name_ptr(name));
 		return index ? &properties[*index] : nullptr;
 	}
 	const SignalDef *find_signal(const StringName &name) const {

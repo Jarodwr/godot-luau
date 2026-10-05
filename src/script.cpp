@@ -348,7 +348,7 @@ static int cache_index(lua_State *L) {
 			// Plain properties are fields of T: missing means nil. Properties
 			// with accessors call their getter on every read.
 			const LuauScript::PropertyDef *property = route.property;
-			const LuauScript::MethodDef *getter = property->getter.is_empty() ? nullptr : instance->script->find_method(property->getter);
+			const LuauScript::MethodDef *getter = property->getter_method;
 			if (getter == nullptr) {
 				lua_pushnil(L);
 				return 1;
@@ -409,7 +409,7 @@ static int self_newindex(lua_State *L) {
 		LuauScript::Route route = route_of(L, instance, string_atom(L, 2));
 		if (route.kind == LuauScript::ROUTE_PROPERTY && route.property->has_accessors()) {
 			const LuauScript::PropertyDef *property = route.property;
-			const LuauScript::MethodDef *setter = property->setter.is_empty() ? nullptr : instance->script->find_method(property->setter);
+			const LuauScript::MethodDef *setter = property->setter_method;
 			if (setter == nullptr) {
 				CharString name = String(property->name).utf8();
 				luaL_error(L, "property '%s' is read-only", name.get_data());
@@ -474,26 +474,21 @@ static void create_self_table(lua_State *L, Instance *instance) {
 // A value of a declared type: numbers converted directly, anything else
 // through coerce_to_type
 static void push_typed(lua_State *L, const Variant &value, Variant::Type type) {
-	Variant::Type have = value.get_type();
+	Variant::Type have = type_of(value);  // read from the bytes: no engine call
+	const unsigned char *data = reinterpret_cast<const unsigned char *>(value._native_ptr()) + VARIANT_DATA;
 	if (type == Variant::NIL || have == type || have == Variant::NIL) {
 		push_variant(L, value);
-	} else if (type == Variant::FLOAT && have == Variant::INT) {
-		lua_pushnumber(L, (double)(int64_t)value);
-	} else if (type == Variant::INT && have == Variant::FLOAT) {
-		lua_pushnumber(L, (double)(int64_t)(double)value);
+	} else if (type == Variant::FLOAT && have == Variant::INT && variant_layout_checked()) {
+		lua_pushnumber(L, (double)*reinterpret_cast<const int64_t *>(data));
+	} else if (type == Variant::INT && have == Variant::FLOAT && variant_layout_checked()) {
+		lua_pushnumber(L, (double)(int64_t)*reinterpret_cast<const double *>(data));
 	} else {
 		push_variant(L, coerce_to_type(value, type));
 	}
 }
 
 static void to_typed(lua_State *L, int index, Variant::Type type, Variant *r_value) {
-	if (lua_type(L, index) == LUA_TNUMBER && type == Variant::FLOAT) {
-		*r_value = lua_tonumber(L, index);
-	} else if (lua_type(L, index) == LUA_TNUMBER && type == Variant::INT) {
-		*r_value = (int64_t)lua_tonumber(L, index);
-	} else {
-		*r_value = coerce_to_type(to_variant(L, index), type);
-	}
+	write_result(L, index, r_value, type);
 }
 
 static GDExtensionBool set_func(Instance *instance, GDExtensionConstStringNamePtr p_name, GDExtensionConstVariantPtr p_value) {
@@ -503,7 +498,7 @@ static GDExtensionBool set_func(Instance *instance, GDExtensionConstStringNamePt
 	const LuauScript *script = instance->script.ptr();
 	if (const LuauScript::PropertyDef *property = script->find_property(name)) {
 		if (property->has_accessors()) {
-			const LuauScript::MethodDef *setter = property->setter.is_empty() ? nullptr : script->find_method(property->setter);
+			const LuauScript::MethodDef *setter = property->setter_method;
 			if (setter == nullptr) {
 				return false;
 			}
@@ -552,7 +547,7 @@ static GDExtensionBool get_func(Instance *instance, GDExtensionConstStringNamePt
 	const LuauScript *script = instance->script.ptr();
 	if (const LuauScript::PropertyDef *property = script->find_property(name)) {
 		if (property->has_accessors()) {
-			const LuauScript::MethodDef *getter = property->getter.is_empty() ? nullptr : script->find_method(property->getter);
+			const LuauScript::MethodDef *getter = property->getter_method;
 			if (getter == nullptr || !pcall_script_method(L, instance, getter, 0)) {
 				return false;
 			}
@@ -577,7 +572,7 @@ static GDExtensionBool get_func(Instance *instance, GDExtensionConstStringNamePt
 	push_string_name(L, name);
 	bool has = lua_rawget(L, -2) != LUA_TNIL;
 	if (has) {
-		*(Variant *)r_ret = to_variant(L, -1);
+		write_result(L, -1, (Variant *)r_ret);
 	}
 	lua_pop(L, 2);
 	if (has) {
@@ -589,7 +584,7 @@ static GDExtensionBool get_func(Instance *instance, GDExtensionConstStringNamePt
 		if (pcall_script_method(L, instance, script->get_method, 1)) {
 			bool handled = !lua_isnil(L, -1);
 			if (handled) {
-				*(Variant *)r_ret = to_variant(L, -1);
+				write_result(L, -1, (Variant *)r_ret);
 			}
 			lua_pop(L, 1);
 			return handled;
@@ -1194,6 +1189,7 @@ LuauScript::PropertyDef parse_property(lua_State *L, const StringName &name, int
 		lua_pop(L, 1);
 		p.getter = field_string(L, index, "get");
 		p.setter = field_string(L, index, "set");
+		p.accessors = !p.getter.is_empty() || !p.setter.is_empty();
 		lua_rawgetfield(L, index, "range");
 		if (lua_istable(L, -1)) {
 			p.hint = PROPERTY_HINT_RANGE;
@@ -1772,13 +1768,20 @@ Error LuauScript::_reload(bool p_keep_state) {
 	lua_pop(L, 1);
 
 	for (int i = 0; i < properties.size(); i++) {
-		property_index[properties[i].name] = i;
+		property_index[name_ptr(properties[i].name)] = i;
 	}
 	for (int i = 0; i < signals.size(); i++) {
 		signal_index[signals[i].name] = i;
 	}
 	for (const auto &[name, method] : methods) {
 		methods_by_ptr.insert(name_ptr(name), &method);
+	}
+	// Accessors resolved once (inherited properties' too: their pointers
+	// pointed into the base's methods)
+	for (int i = 0; i < properties.size(); i++) {
+		PropertyDef &p = properties.write[i];
+		p.getter_method = p.getter.is_empty() ? nullptr : methods.getptr(p.getter);
+		p.setter_method = p.setter.is_empty() ? nullptr : methods.getptr(p.setter);
 	}
 	get_method = methods.getptr("_get");
 	set_method = methods.getptr("_set");

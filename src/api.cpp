@@ -1435,6 +1435,57 @@ void to_variant_into_nil(lua_State *L, int index, Variant *r_dest) {
 	memcpy((void *)r_dest, buffer, sizeof(Variant));
 }
 
+void write_result(lua_State *L, int index, Variant *r_dest, Variant::Type type) {
+	if (!variant_bytes_ok || *reinterpret_cast<const int32_t *>(r_dest) != Variant::NIL) {
+		// Something to destroy first: the general path
+		if (type == Variant::NIL) {
+			*r_dest = to_variant(L, index);
+		} else {
+			*r_dest = coerce_to_type(to_variant(L, index), type);
+		}
+		return;
+	}
+	unsigned char *bytes = reinterpret_cast<unsigned char *>(r_dest);
+	int lua_t = lua_type(L, index);
+	if (type == Variant::NIL) {
+		to_variant_into_nil(L, index, r_dest);
+		return;
+	}
+	// Declared types: numbers and vectors take the declared one; values
+	// whose own type is the declared one are written as they are
+	if (lua_t == LUA_TNUMBER && (type == Variant::FLOAT || type == Variant::INT)) {
+		double d = lua_tonumber(L, index);
+		if (type == Variant::FLOAT) {
+			*reinterpret_cast<double *>(bytes + VARIANT_DATA) = d;
+		} else {
+			*reinterpret_cast<int64_t *>(bytes + VARIANT_DATA) = (int64_t)d;
+		}
+		*reinterpret_cast<int32_t *>(bytes) = type;
+		return;
+	}
+	if (lua_t == LUA_TVECTOR && (type == Variant::VECTOR2 || type == Variant::VECTOR3)) {
+		const float *v = lua_tovector(L, index);
+		float *out = reinterpret_cast<float *>(bytes + VARIANT_DATA);
+		out[0] = v[0];
+		out[1] = v[1];
+		if (type == Variant::VECTOR3) {
+			out[2] = v[2];
+		}
+		*reinterpret_cast<int32_t *>(bytes) = type;
+		return;
+	}
+	if ((lua_t == LUA_TBOOLEAN && type == Variant::BOOL) || (lua_t == LUA_TSTRING && type == Variant::STRING)) {
+		if (write_plain_variant(L, index, bytes)) {
+			return;
+		}
+	}
+	if (lua_t <= LUA_TNIL) {
+		return;  // stays nil
+	}
+	Variant value = coerce_to_type(to_variant(L, index), type);
+	new (bytes) Variant(value);  // r_dest held nil: nothing to destroy
+}
+
 // ---------------------------------------------------------------- globals
 
 

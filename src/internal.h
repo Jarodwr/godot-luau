@@ -81,6 +81,11 @@ constexpr int MAX_VARIANT_ARGS = 16;
 // `vectors_as_3`: write vectors as Vector3 even when z = 0 (see
 // call_with_vector_retry)
 bool write_plain_variant(lua_State *L, int index, void *memory, bool vectors_as_3 = false);
+// The Lua value at `index` into `*r_dest`, a Variant the engine owns (a
+// property read, a call's result), converted to `type` unless it's NIL.
+// When r_dest holds nil, plain values are written as bytes: godot-cpp's
+// Variant constructors, assignment and destructor are each an engine call.
+void write_result(lua_State *L, int index, Variant *r_dest, Variant::Type type = Variant::NIL);
 // The Variant inside a Godot value's userdata (Variant or object box), to be
 // used in place while it stays on the stack; null for other Lua values
 const Variant *borrow_variant(lua_State *L, int index);

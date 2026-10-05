@@ -63,3 +63,4 @@ at the same optimisation level.
 | [0037](0037-script-errors.md) | Script errors with location and backtrace, at no cost when nothing fails | Accepted |
 | [0038](0038-awaiting-luau-from-gdscript.md) | A suspended call returns a completion Signal, so GDScript can await it | Accepted |
 | [0039](0039-statics-and-remaining-overrides.md) | Static functions and constants on the script object; the remaining overrides | Accepted |
+| [0040](0040-results-without-variant-temporaries.md) | Results written into engine-owned Variants; property accessors resolved at load | Accepted |
