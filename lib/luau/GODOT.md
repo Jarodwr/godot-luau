@@ -91,6 +91,13 @@ receive the wrong type.
   - `Compiler/VectorConstants`: expects `vector.create(1, 2)` to fold into a
     constant.
 
+- **Sanitizers:** `vector_kinds.luau` (every optimisation level, both table
+  lookup paths), `lua_pushvector2` and the sandbox freeze run clean under
+  AddressSanitizer and UndefinedBehaviorSanitizer. Run them outside doctest:
+  upstream's own suite isn't clean there, with a misaligned load in
+  `Bytecode/src/BytecodeGraphParser.h` and a doctest subcase overflow,
+  neither from this patch.
+
 To run them:
 
 ```sh
