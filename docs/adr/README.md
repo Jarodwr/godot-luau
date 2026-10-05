@@ -65,3 +65,4 @@ at the same optimisation level.
 | [0039](0039-statics-and-remaining-overrides.md) | Static functions and constants on the script object; the remaining overrides | Accepted |
 | [0040](0040-results-without-variant-temporaries.md) | Results written into engine-owned Variants; property accessors resolved at load | Accepted |
 | [0041](0041-table-conversion-in-place.md) | Lua tables to Arrays: one sequence check, elements written in place | Accepted |
+| [0042](0042-operator-dispatch-trimmed.md) | Operator dispatch fetches operands once; elementwise maths in fixed-width form | Accepted |

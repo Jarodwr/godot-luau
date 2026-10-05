@@ -519,8 +519,9 @@ struct Operand {
 	alignas(16) unsigned char storage[16];
 };
 
-void classify(lua_State *L, int index, Operand &operand) {
-	switch (lua_type(L, index)) {
+// `lua_t` and `held` (the Variant userdata, or null): fetched once by the caller
+void classify(lua_State *L, int index, Operand &operand, int lua_t, const unsigned char *held) {
+	switch (lua_t) {
 		case LUA_TNUMBER: {
 			double d = lua_tonumber(L, index);
 			if (d == (double)(int64_t)d && d > -9007199254740992.0 && d < 9007199254740992.0) {
@@ -547,13 +548,12 @@ void classify(lua_State *L, int index, Operand &operand) {
 			return;
 		}
 		case LUA_TUSERDATA: {
-			unsigned char *held = (unsigned char *)lua_touserdatatagged(L, index, TAG_VARIANT);
 			if (held == nullptr) {
 				return;
 			}
 			// Type and pointer from the bytes, deciding the kind once
 			Variant::Type type = (Variant::Type)*reinterpret_cast<const int32_t *>(held);
-			unsigned char *data = held + VARIANT_DATA;
+			unsigned char *data = const_cast<unsigned char *>(held) + VARIANT_DATA;
 			switch (base_kind(type)) {
 				case BaseKind::INLINE: operand.pointer = data; break;
 				case BaseKind::HEAP: operand.pointer = *reinterpret_cast<void **>(data); break;
@@ -655,13 +655,35 @@ inline const unsigned char *data_if(const unsigned char *held, int32_t type) {
 
 } // namespace
 
-static bool elementwise_arith(lua_State *L, int op) {
+// Componentwise op on four components (a Variant's data holds 16 bytes, so
+// three-component types read and write a spare one, cleared by the caller),
+// with the operands already expanded (a scalar repeated). Constant bounds:
+// the compiler makes each a few vector instructions, not a loop or memcpy.
+template <typename T, typename U>
+__attribute__((always_inline)) static inline void apply_elementwise(int op, const T *x, const T *y, T *out) {
+	switch (op) {
+		case Variant::OP_ADD:
+			for (int i = 0; i < 4; i++) out[i] = (T)((U)x[i] + (U)y[i]);
+			break;
+		case Variant::OP_SUBTRACT:
+			for (int i = 0; i < 4; i++) out[i] = (T)((U)x[i] - (U)y[i]);
+			break;
+		case Variant::OP_MULTIPLY:
+			for (int i = 0; i < 4; i++) out[i] = (T)((U)x[i] * (U)y[i]);
+			break;
+		default:  // OP_DIVIDE (floats only)
+			for (int i = 0; i < 4; i++) out[i] = (T)((U)x[i] / (U)y[i]);
+			break;
+	}
+}
+
+// held_a/held_b: the operands' Variant userdata, or null (fetched once by
+// the caller)
+static bool elementwise_arith(lua_State *L, int op, const unsigned char *held_a, const unsigned char *held_b) {
 	if (op != Variant::OP_ADD && op != Variant::OP_SUBTRACT && op != Variant::OP_MULTIPLY && op != Variant::OP_DIVIDE) {
 		return false;
 	}
 	// The value operand decides the type
-	const unsigned char *held_a = (const unsigned char *)lua_touserdatatagged(L, 1, TAG_VARIANT);
-	const unsigned char *held_b = (const unsigned char *)lua_touserdatatagged(L, 2, TAG_VARIANT);
 	const unsigned char *any = held_a ? held_a : held_b;
 	if (any == nullptr) {
 		return false;
@@ -697,46 +719,68 @@ static bool elementwise_arith(lua_State *L, int op) {
 	unsigned char *box = (unsigned char *)lua_newuserdatataggedwithmetatable(L, sizeof(Variant), TAG_VARIANT);
 	*reinterpret_cast<int64_t *>(box) = info->type;  // type tag and padding
 	unsigned char *out = box + VARIANT_DATA;
-	if (info->count == 3) {
-		reinterpret_cast<int32_t *>(out)[3] = 0;  // the rest of the data
-	}
-	for (int i = 0; i < info->count; i++) {
-		if (info->integer) {
-			uint32_t x = scalar_a ? (uint32_t)(int32_t)(int64_t)scalar : (uint32_t)reinterpret_cast<const int32_t *>(a)[i];
-			uint32_t y = scalar_b ? (uint32_t)(int32_t)(int64_t)scalar : (uint32_t)reinterpret_cast<const int32_t *>(b)[i];
-			uint32_t r = op == Variant::OP_ADD ? x + y : op == Variant::OP_SUBTRACT ? x - y : x * y;
-			reinterpret_cast<int32_t *>(out)[i] = (int32_t)r;
+	if (info->integer) {
+		int32_t x[4], y[4];
+		if (scalar_a) {
+			int32_t s = (int32_t)(int64_t)scalar;
+			x[0] = x[1] = x[2] = x[3] = s;
 		} else {
-			float x = scalar_a ? (float)scalar : reinterpret_cast<const float *>(a)[i];
-			float y = scalar_b ? (float)scalar : reinterpret_cast<const float *>(b)[i];
-			float r;
-			if (op == Variant::OP_DIVIDE && scalar_b && info->type == Variant::QUATERNION) {
-				r = x * (1.0f / y);  // Godot's Quaternion / scalar multiplies by the reciprocal
-			} else {
-				r = op == Variant::OP_ADD ? x + y : op == Variant::OP_SUBTRACT ? x - y : op == Variant::OP_MULTIPLY ? x * y : x / y;
-			}
-			reinterpret_cast<float *>(out)[i] = r;
+			memcpy(x, a, 16);
 		}
+		if (scalar_b) {
+			int32_t s = (int32_t)(int64_t)scalar;
+			y[0] = y[1] = y[2] = y[3] = s;
+		} else {
+			memcpy(y, b, 16);
+		}
+		// uint32: Godot's int32 maths wraps around
+		apply_elementwise<int32_t, uint32_t>(op, x, y, reinterpret_cast<int32_t *>(out));
+	} else {
+		float x[4], y[4];
+		if (scalar_a) {
+			float s = (float)scalar;
+			x[0] = x[1] = x[2] = x[3] = s;
+		} else {
+			memcpy(x, a, 16);
+		}
+		if (scalar_b) {
+			// Godot's Quaternion / scalar multiplies by the reciprocal
+			float s = op == Variant::OP_DIVIDE && info->type == Variant::QUATERNION ? 1.0f / (float)scalar : (float)scalar;
+			y[0] = y[1] = y[2] = y[3] = s;
+			if (op == Variant::OP_DIVIDE && info->type == Variant::QUATERNION) {
+				op = Variant::OP_MULTIPLY;
+			}
+		} else {
+			memcpy(y, b, 16);
+		}
+		apply_elementwise<float, float>(op, x, y, reinterpret_cast<float *>(out));
+	}
+	if (info->count == 3) {
+		reinterpret_cast<int32_t *>(out)[3] = 0;  // the spare component
 	}
 	return true;
 }
 
 bool call_validated_operator(lua_State *L, int op) {
+	// Each operand's type and Variant userdata, fetched once
+	int ta = lua_type(L, 1), tb = lua_type(L, 2);
+	const unsigned char *held_a = ta == LUA_TUSERDATA ? (const unsigned char *)lua_touserdatatagged(L, 1, TAG_VARIANT) : nullptr;
+	const unsigned char *held_b = tb == LUA_TUSERDATA ? (const unsigned char *)lua_touserdatatagged(L, 2, TAG_VARIANT) : nullptr;
 	// Packed values (light userdata) or values in userdata: try the matching
 	// direct path first
-	if (PACKED_VALUES && (lua_type(L, 1) == LUA_TLIGHTUSERDATA || lua_type(L, 2) == LUA_TLIGHTUSERDATA)) {
+	if (PACKED_VALUES && (ta == LUA_TLIGHTUSERDATA || tb == LUA_TLIGHTUSERDATA)) {
 		if (packed_vector2i_arith(L, op)) {
 			return true;
 		}
-	} else if (elementwise_arith(L, op)) {
+	} else if (elementwise_arith(L, op, held_a, held_b)) {
 		return true;
 	}
 	if (!builtin_layout_ok || op < 0 || op >= CACHED_OPS) {
 		return false;
 	}
 	Operand a, b;
-	classify(L, 1, a);
-	classify(L, 2, b);
+	classify(L, 1, a, ta, held_a);
+	classify(L, 2, b, tb, held_b);
 	if (a.type < 0 || b.type < 0) {
 		return false;
 	}
