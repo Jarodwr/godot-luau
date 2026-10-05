@@ -66,6 +66,7 @@ public:
 		int defaults_ref = LUA_NOREF;  // the same, as a Lua sequence
 		Variant::Type ret_type = Variant::NIL;
 		bool has_ret_type = false;
+		bool is_static = false;  // `static = { … }`: called without self
 		Vector<Variant::Type> arg_types;
 	};
 	Vector<PropertyDef> properties;  // inspector order
@@ -80,6 +81,12 @@ public:
 	// Which Object overrides the script defines
 	// The overrides, if the script defines them (pointers into methods)
 	const MethodDef *get_method = nullptr, *set_method = nullptr, *notification_method = nullptr;
+	const MethodDef *property_list_method = nullptr, *validate_property_method = nullptr, *to_string_method = nullptr;
+	const MethodDef *can_revert_method = nullptr, *get_revert_method = nullptr;
+	// Serves static functions and constants on the script object itself
+	// (`preload("x.luau").make()`): a script instance on this resource
+	bool has_static_instance = false;
+	void ensure_static_instance();
 
 	const PropertyDef *find_property(const StringName &name) const {
 		const int *index = property_index.getptr(name);
@@ -135,7 +142,10 @@ public:
 	TypedArray<Dictionary> _get_documentation() const override { return {}; }
 	String _get_class_icon_path() const override { return icon_path; }
 	bool _has_method(const StringName &p_method) const override { return find_method(p_method) != nullptr; }
-	bool _has_static_method(const StringName &) const override { return false; }
+	bool _has_static_method(const StringName &p_method) const override {
+		const MethodDef *method = find_method(p_method);
+		return method != nullptr && method->is_static;
+	}
 	Variant _get_script_method_argument_count(const StringName &p_method) const override;
 	Dictionary _get_method_info(const StringName &p_method) const override;
 	bool _is_tool() const override { return tool; }

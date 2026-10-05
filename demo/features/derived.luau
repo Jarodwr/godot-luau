@@ -24,10 +24,33 @@ local Features = {
 	},
 	types = {
 		typed_add = { args = { "int", "float" }, ret = "float" },
+		scale = { args = { "float" }, ret = "float" },
 	},
+	static = { "make", "scale" },
 }
 
 Features.GREETING = "hi"
+
+-- Static functions (ADR 0039): no self
+function Features.make(n) return n * 3 end
+function Features.scale(x) return x * 1.5 end
+
+-- More overrides
+function Features:_get_property_list()
+	return { { name = "dynamic", type = 2, usage = 6 } }  -- TYPE_INT, PROPERTY_USAGE_DEFAULT
+end
+function Features:_validate_property(property)
+	if property.name == "speed" then
+		property.hint = 1  -- PROPERTY_HINT_RANGE
+		property.hint_string = "0,10"
+	end
+end
+function Features:_to_string() return "Features<" .. self.GREETING .. ">" end
+function Features:_property_can_revert(name) return name == "dynamic" end
+function Features:_property_get_revert(name)
+	if name == "dynamic" then return 5 end
+	return nil
+end
 
 function Features:set_armor(value) self._armor = value * 2 end
 function Features:get_armor() return self._armor or 0 end

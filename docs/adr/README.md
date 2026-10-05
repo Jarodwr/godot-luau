@@ -62,3 +62,4 @@ at the same optimisation level.
 | [0036](0036-modules-and-hot-reload.md) | Modules by path, and hot reload that keeps tables and instances | Accepted |
 | [0037](0037-script-errors.md) | Script errors with location and backtrace, at no cost when nothing fails | Accepted |
 | [0038](0038-awaiting-luau-from-gdscript.md) | A suspended call returns a completion Signal, so GDScript can await it | Accepted |
+| [0039](0039-statics-and-remaining-overrides.md) | Static functions and constants on the script object; the remaining overrides | Accepted |

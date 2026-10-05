@@ -202,5 +202,5 @@ Missing features are tracked one per file in [`todo/`](todo/README.md).
   arguments are unaffected.
 - **Luau numbers are doubles.** Integers beyond 2^53 lose precision (same as
   LuaJIT).
-- **No static functions, RPC, editor features or debugging yet.** One Luau
+- **No RPC, editor features or debugging yet.** One Luau
   state, main thread only.

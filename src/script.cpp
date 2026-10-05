@@ -612,8 +612,75 @@ static uint32_t property_usage(const LuauScript::PropertyDef &property) {
 	return property.exported ? (PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SCRIPT_VARIABLE) : PROPERTY_USAGE_SCRIPT_VARIABLE;
 }
 
+// A property list as dictionaries, when the script overrides
+// _get_property_list (properties added at runtime) or _validate_property
+// (changes to each property's info), as in GDScript
+static Vector<Dictionary> script_property_list(Instance *instance) {
+	const LuauScript *script = instance->script.ptr();
+	Vector<Dictionary> list;
+	for (const LuauScript::PropertyDef &p : script->properties) {
+		Dictionary d;
+		d["name"] = p.name;
+		d["type"] = p.type;
+		d["class_name"] = p.class_name;
+		d["hint"] = p.hint;
+		d["hint_string"] = p.hint_string;
+		d["usage"] = property_usage(p);
+		list.push_back(d);
+	}
+	lua_State *L = state();
+	if (script->property_list_method && pcall_script_method(L, instance, script->property_list_method, 0)) {
+		Variant added = to_variant(L, -1);
+		lua_pop(L, 1);
+		if (added.get_type() == Variant::ARRAY) {
+			Array array = added;
+			for (int i = 0; i < array.size(); i++) {
+				if (array[i].get_type() == Variant::DICTIONARY) {
+					list.push_back(array[i]);
+				}
+			}
+		}
+	}
+	if (script->validate_property_method) {
+		for (Dictionary &d : list) {
+			push_variant(L, d);  // a Dictionary: the method changes it in place
+			if (pcall_script_method(L, instance, script->validate_property_method, 1)) {
+				lua_pop(L, 1);
+			}
+		}
+	}
+	return list;
+}
+
 static const GDExtensionPropertyInfo *get_property_list_func(Instance *instance, uint32_t *r_count) {
 	const Vector<LuauScript::PropertyDef> &properties = instance->script->properties;
+	if (instance->script->property_list_method || instance->script->validate_property_method) {
+		Vector<Dictionary> list = script_property_list(instance);
+		*r_count = (uint32_t)list.size();
+		if (list.is_empty()) {
+			return nullptr;
+		}
+		PropertyListStorage *storage = new PropertyListStorage();
+		storage->infos.resize(list.size());
+		storage->names.resize(list.size());
+		storage->class_names.resize(list.size());
+		storage->hints.resize(list.size());
+		for (int i = 0; i < list.size(); i++) {
+			const Dictionary &d = list[i];
+			storage->names[i] = d.get("name", "");
+			storage->class_names[i] = d.get("class_name", "");
+			storage->hints[i] = d.get("hint_string", "");
+			GDExtensionPropertyInfo &info = storage->infos[i];
+			info.type = (GDExtensionVariantType)(int)d.get("type", 0);
+			info.name = storage->names[i]._native_ptr();
+			info.class_name = storage->class_names[i]._native_ptr();
+			info.hint = (uint32_t)(int)d.get("hint", 0);
+			info.hint_string = storage->hints[i]._native_ptr();
+			info.usage = (uint32_t)(int)d.get("usage", PROPERTY_USAGE_DEFAULT);
+		}
+		property_lists.insert(storage->infos.data(), storage);
+		return storage->infos.data();
+	}
 	*r_count = (uint32_t)properties.size();
 	if (properties.is_empty()) {
 		return nullptr;
@@ -654,6 +721,17 @@ static GDExtensionVariantType get_property_type_func(Instance *instance, GDExten
 }
 
 static GDExtensionBool property_can_revert_func(Instance *instance, GDExtensionConstStringNamePtr p_name) {
+	if (const LuauScript::MethodDef *method = instance->script->can_revert_method) {
+		lua_State *L = state();
+		push_string_name(L, *(const StringName *)p_name);
+		if (pcall_script_method(L, instance, method, 1)) {
+			bool can = lua_toboolean(L, -1);
+			lua_pop(L, 1);
+			if (can) {
+				return true;
+			}
+		}
+	}
 	const LuauScript::PropertyDef *property = instance->script->find_property(*(const StringName *)p_name);
 	if (property == nullptr || !property->exported) {
 		return false;
@@ -666,6 +744,20 @@ static GDExtensionBool property_can_revert_func(Instance *instance, GDExtensionC
 }
 
 static GDExtensionBool property_get_revert_func(Instance *instance, GDExtensionConstStringNamePtr p_name, GDExtensionVariantPtr r_ret) {
+	if (const LuauScript::MethodDef *method = instance->script->get_revert_method) {
+		lua_State *L = state();
+		push_string_name(L, *(const StringName *)p_name);
+		if (pcall_script_method(L, instance, method, 1)) {
+			bool has = !lua_isnil(L, -1);
+			if (has) {
+				*(Variant *)r_ret = to_variant(L, -1);
+			}
+			lua_pop(L, 1);
+			if (has) {
+				return true;
+			}
+		}
+	}
 	const LuauScript::PropertyDef *property = instance->script->find_property(*(const StringName *)p_name);
 	if (property == nullptr) {
 		return false;
@@ -719,7 +811,7 @@ static const GDExtensionMethodInfo *get_method_list_func(Instance *instance, uin
 		info.return_value.class_name = storage->empty._native_ptr();
 		info.return_value.hint_string = storage->empty_hint._native_ptr();
 		info.return_value.usage = method.has_ret_type ? PROPERTY_USAGE_DEFAULT : PROPERTY_USAGE_NIL_IS_VARIANT;
-		info.flags = GDEXTENSION_METHOD_FLAGS_DEFAULT;
+		info.flags = GDEXTENSION_METHOD_FLAGS_DEFAULT | (method.is_static ? GDEXTENSION_METHOD_FLAG_STATIC : 0);
 		info.argument_count = (uint32_t)method.nparams;
 		info.arguments = storage->args[i].empty() ? nullptr : storage->args[i].data();
 		i++;
@@ -756,7 +848,10 @@ static void call_func(Instance *instance, GDExtensionConstStringNamePtr p_method
 	Coroutine *co = acquire_thread(instance->owner_id);
 	lua_State *L = co->thread;
 	lua_getref(L, method->ref);
-	lua_getref(L, instance->table_ref);
+	int self_count = method->is_static ? 0 : 1;
+	if (self_count) {
+		lua_getref(L, instance->table_ref);
+	}
 	bool typed = !method->arg_types.is_empty();
 	for (GDExtensionInt i = 0; i < argc; i++) {
 		const Variant &arg = *(const Variant *)args[i];
@@ -779,7 +874,7 @@ static void call_func(Instance *instance, GDExtensionConstStringNamePtr p_method
 		lua_remove(L, table);
 	}
 	r_error->error = GDEXTENSION_CALL_OK;
-	int status = run_thread(co, pushed + 1);
+	int status = run_thread(co, pushed + self_count);
 	if (status == LUA_YIELD) {
 		*(Variant *)r_ret = completion_signal(co);  // GDScript can await it
 		return;
@@ -807,6 +902,20 @@ static void notification_func(Instance *instance, int32_t what, GDExtensionBool)
 	if (run_thread(co, 2) == LUA_OK) {
 		release_thread(co);
 	}
+}
+
+static void to_string_func(Instance *instance, GDExtensionBool *r_is_valid, GDExtensionStringPtr r_out) {
+	*r_is_valid = false;
+	const LuauScript::MethodDef *method = instance->script->to_string_method;
+	lua_State *L = state();
+	if (method == nullptr || L == nullptr || !pcall_script_method(L, instance, method, 0)) {
+		return;
+	}
+	if (lua_type(L, -1) == LUA_TSTRING) {
+		*(String *)r_out = String::utf8(lua_tostring(L, -1));
+		*r_is_valid = true;
+	}
+	lua_pop(L, 1);
 }
 
 static GDExtensionObjectPtr get_owner_func(Instance *instance) {
@@ -859,6 +968,7 @@ static GDExtensionScriptInstanceInfo3 instance_info = [] {
 	info.property_can_revert_func = (GDExtensionScriptInstancePropertyCanRevert)property_can_revert_func;
 	info.property_get_revert_func = (GDExtensionScriptInstancePropertyGetRevert)property_get_revert_func;
 	info.get_owner_func = (GDExtensionScriptInstanceGetOwner)get_owner_func;
+	info.to_string_func = (GDExtensionScriptInstanceToString)to_string_func;
 	info.get_method_list_func = (GDExtensionScriptInstanceGetMethodList)get_method_list_func;
 	info.free_method_list_func = (GDExtensionScriptInstanceFreeMethodList2)free_method_list_func;
 	info.get_property_type_func = (GDExtensionScriptInstanceGetPropertyType)get_property_type_func;
@@ -873,6 +983,126 @@ static GDExtensionScriptInstanceInfo3 instance_info = [] {
 	info.free_func = (GDExtensionScriptInstanceFree)free_func;
 	return info;
 }();
+
+// ---------------------------------------------------------------- statics (ADR 0039)
+// A script instance on the script object itself: Object::callp and
+// Object::get ask it first, so `preload("x.luau").make()` and
+// `preload("x.luau").MAX` reach the script. Everything else falls through to
+// the script's own methods and properties.
+
+struct StaticInstance {
+	LuauScript *script;
+};
+
+static GDExtensionBool static_set_func(StaticInstance *, GDExtensionConstStringNamePtr, GDExtensionConstVariantPtr) {
+	return false;
+}
+
+static GDExtensionBool static_get_func(StaticInstance *s, GDExtensionConstStringNamePtr p_name, GDExtensionVariantPtr r_ret) {
+	String name = *(const StringName *)p_name;
+	if (!s->script->constants.has(name)) {
+		return false;
+	}
+	*(Variant *)r_ret = s->script->constants[name];
+	return true;
+}
+
+static GDExtensionBool static_has_method_func(StaticInstance *s, GDExtensionConstStringNamePtr p_name) {
+	const LuauScript::MethodDef *method = s->script->find_method(*(const StringName *)p_name);
+	return method != nullptr && method->is_static;
+}
+
+static void static_call_func(StaticInstance *s, GDExtensionConstStringNamePtr p_method, const GDExtensionConstVariantPtr *args,
+		GDExtensionInt argc, GDExtensionVariantPtr r_ret, GDExtensionCallError *r_error) {
+	const LuauScript::MethodDef *method = s->script->find_method(*(const StringName *)p_method);
+	if (method == nullptr || !method->is_static || state() == nullptr) {
+		r_error->error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;  // the script object's own methods
+		return;
+	}
+	Coroutine *co = acquire_thread(0);
+	lua_State *L = co->thread;
+	lua_getref(L, method->ref);
+	for (GDExtensionInt i = 0; i < argc; i++) {
+		const Variant &arg = *(const Variant *)args[i];
+		if (i < method->arg_types.size()) {
+			push_typed(L, arg, method->arg_types[i]);
+		} else {
+			push_variant(L, arg);
+		}
+	}
+	int pushed = (int)argc;
+	int missing = method->nparams - pushed;
+	if (missing > 0 && missing <= method->defaults.size()) {
+		lua_getref(L, method->defaults_ref);
+		int table = lua_gettop(L);
+		for (int i = method->defaults.size() - missing; i < method->defaults.size(); i++) {
+			lua_rawgeti(L, table, i + 1);
+			pushed++;
+		}
+		lua_remove(L, table);
+	}
+	r_error->error = GDEXTENSION_CALL_OK;
+	int status = run_thread(co, pushed);
+	if (status == LUA_YIELD) {
+		*(Variant *)r_ret = completion_signal(co);
+		return;
+	}
+	if (status != LUA_OK) {
+		return;
+	}
+	if (!method->has_ret_type) {
+		to_variant_into_nil(L, 1, (Variant *)r_ret);
+	} else if (lua_gettop(L) > 0) {
+		to_typed(L, 1, method->ret_type, (Variant *)r_ret);
+	}
+	release_thread(co);
+}
+
+static GDExtensionObjectPtr static_get_owner_func(StaticInstance *s) {
+	return s->script->_owner;
+}
+
+// Without this Godot's default answer is "keep the object alive", and the
+// script would never be freed
+static GDExtensionBool static_refcount_decremented_func(StaticInstance *) {
+	return true;
+}
+
+static GDExtensionBool static_is_placeholder_func(StaticInstance *) {
+	return false;
+}
+
+static GDExtensionScriptLanguagePtr static_get_language_func(StaticInstance *) {
+	return LuauLanguage::get_singleton()->_owner;
+}
+
+static void static_free_func(StaticInstance *s) {
+	s->script->has_static_instance = false;
+	delete s;
+}
+
+static GDExtensionScriptInstanceInfo3 static_instance_info = [] {
+	GDExtensionScriptInstanceInfo3 info = {};
+	info.set_func = (GDExtensionScriptInstanceSet)static_set_func;
+	info.get_func = (GDExtensionScriptInstanceGet)static_get_func;
+	info.has_method_func = (GDExtensionScriptInstanceHasMethod)static_has_method_func;
+	info.call_func = (GDExtensionScriptInstanceCall)static_call_func;
+	info.get_owner_func = (GDExtensionScriptInstanceGetOwner)static_get_owner_func;
+	info.is_placeholder_func = (GDExtensionScriptInstanceIsPlaceholder)static_is_placeholder_func;
+	info.refcount_decremented_func = (GDExtensionScriptInstanceRefCountDecremented)static_refcount_decremented_func;
+	info.get_language_func = (GDExtensionScriptInstanceGetLanguage)static_get_language_func;
+	info.free_func = (GDExtensionScriptInstanceFree)static_free_func;
+	return info;
+}();
+
+void LuauScript::ensure_static_instance() {
+	if (has_static_instance) {
+		return;
+	}
+	StaticInstance *s = new StaticInstance{ this };
+	gdextension_interface::object_set_script_instance(_owner, gdextension_interface::script_instance_create3(&static_instance_info, s));
+	has_static_instance = true;
+}
 
 // ---------------------------------------------------------------- declarations (ADR 0032)
 
@@ -1104,6 +1334,8 @@ static void clear_methods(LuauScript *script, lua_State *L) {
 	script->methods.clear();
 	script->methods_by_ptr.clear();
 	script->get_method = script->set_method = script->notification_method = nullptr;
+	script->property_list_method = script->validate_property_method = script->to_string_method = nullptr;
+	script->can_revert_method = script->get_revert_method = nullptr;
 }
 
 static void unregister_class_table(LuauScript *script) {
@@ -1472,6 +1704,23 @@ Error LuauScript::_reload(bool p_keep_state) {
 	}
 	lua_pop(L, 1);
 
+	// static = { "make", … }: functions called without self
+	lua_rawgetfield(L, table, "static");
+	if (lua_istable(L, -1)) {
+		each_declaration(L, -1, [&](const StringName &name, int) {
+			if (MethodDef *method = methods.getptr(name)) {
+				method->is_static = true;
+				lua_getref(L, method->ref);
+				lua_Debug ar;
+				if (lua_getinfo(L, -1, "a", &ar)) {
+					method->nparams = ar.nparams;  // no self to leave out
+				}
+				lua_pop(L, 1);
+			}
+		});
+	}
+	lua_pop(L, 1);
+
 	// exports (inspector, saved) and properties (script variables)
 	for (int pass = 0; pass < 2; pass++) {
 		lua_rawgetfield(L, table, pass == 0 ? "exports" : "properties");
@@ -1534,6 +1783,11 @@ Error LuauScript::_reload(bool p_keep_state) {
 	get_method = methods.getptr("_get");
 	set_method = methods.getptr("_set");
 	notification_method = methods.getptr("_notification");
+	property_list_method = methods.getptr("_get_property_list");
+	validate_property_method = methods.getptr("_validate_property");
+	to_string_method = methods.getptr("_to_string");
+	can_revert_method = methods.getptr("_property_can_revert");
+	get_revert_method = methods.getptr("_property_get_revert");
 
 	// Register the class table (for scripts extending this one)
 	unregister_class_table(this);
@@ -1545,6 +1799,13 @@ Error LuauScript::_reload(bool p_keep_state) {
 	lua_settop(L, table - 1);
 	valid = true;
 	update_placeholders();
+	bool has_static = !constants.is_empty();
+	for (const KeyValue<StringName, MethodDef> &E : methods) {
+		has_static = has_static || E.value.is_static;
+	}
+	if (has_static) {
+		ensure_static_instance();
+	}
 	if (reload) {
 		refresh_instances(L, this);
 		reload_dependents(path);
@@ -1617,7 +1878,7 @@ static Dictionary method_info(const LuauScript::MethodDef &method) {
 	Dictionary ret;
 	ret["type"] = method.ret_type;
 	d["return"] = ret;
-	d["flags"] = METHOD_FLAGS_DEFAULT;
+	d["flags"] = METHOD_FLAGS_DEFAULT | (method.is_static ? METHOD_FLAG_STATIC : 0);
 	return d;
 }
 

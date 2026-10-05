@@ -137,6 +137,23 @@ func feature_checks() -> void:
 	check(constants.get("GREETING") == "hi" and constants.get("MAX_HEALTH") == 100, "constants, own and inherited")
 	check(f.constant() == "hi 100", "constants through self")
 
+	# Static functions and constants on the script (ADR 0039)
+	var luau_script = script  # untyped: GDScript checks Script's own methods otherwise
+	check(luau_script.make(4) == 12, "static function called on the script")
+	check(typeof(luau_script.scale(2)) == TYPE_FLOAT and luau_script.scale(2) == 3.0, "typed static function")
+	check(f.make(2) == 6, "static function called through an instance")
+	check(luau_script.GREETING == "hi" and luau_script.MAX_HEALTH == 100, "constants read on the script, own and inherited")
+	check(luau_script.has_method("make") and script.resource_path.ends_with("derived.luau"), "the script's own methods and properties still work")
+
+	# More overrides
+	props = {}
+	for p in f.get_property_list():
+		props[p.name] = p
+	check(props.has("dynamic") and props.dynamic.type == TYPE_INT, "_get_property_list adds properties")
+	check(props.speed.hint == PROPERTY_HINT_RANGE and props.speed.hint_string == "0,10", "_validate_property changes a property's info")
+	check(str(f) == "Features<hi>", "_to_string (got %s)" % str(f))
+	check(f.property_can_revert("dynamic") and f.property_get_revert("dynamic") == 5, "_property_can_revert and _property_get_revert")
+
 	# Inheritance
 	check(script.get_base_script() != null and script.get_base_script().resource_path == "res://features/base.luau", "base script")
 	check(f.hurt(3) == 7, "inherited method using an inherited property")
@@ -303,4 +320,7 @@ func frame_checks() -> void:
 	doomed.free()
 	check(not is_instance_valid(helper), "freeing the object frees its waiting call's completion object")
 	check(t.thread_stats().waiting == 0, "nothing left waiting")
+	# This code runs inside t.go's deferred emission (it resumed from an await
+	# that emission finished): free t once that emission is over
+	await process_frame
 	t.free()
