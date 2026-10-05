@@ -8,11 +8,15 @@
 #include <math.h>
 
 #if LUA_VECTOR_SIZE == 3
-// Godot fork (GODOT.md): a result has the kind of the vector argument at `like`
-static void pushvectorlike(lua_State* L, int like, LUA_VECTOR_TYPE x, LUA_VECTOR_TYPE y, LUA_VECTOR_TYPE z)
+// Godot fork (GODOT.md): a result is 2D only when every vector argument in
+// [first, last] is, as in the interpreter's arithmetic
+static void pushvectorlike(lua_State* L, int first, int last, LUA_VECTOR_TYPE x, LUA_VECTOR_TYPE y, LUA_VECTOR_TYPE z)
 {
 #if LUA_VECTOR_KINDS
-    if (lua_type(L, like) == LUA_TVECTOR2)
+    bool is2d = true;
+    for (int i = first; i <= last && is2d; i++)
+        is2d = lua_type(L, i) == LUA_TVECTOR2;
+    if (is2d)
     {
         lua_pushvector2(L, x, y);
         return;
@@ -71,7 +75,7 @@ static int vector_normalize(lua_State* L)
 #else
     LUA_VECTOR_TYPE invSqrt = LUA_VECTOR_TYPE(1.0) / luai_sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
 
-    pushvectorlike(L, 1, v[0] * invSqrt, v[1] * invSqrt, v[2] * invSqrt);
+    pushvectorlike(L, 1, 1, v[0] * invSqrt, v[1] * invSqrt, v[2] * invSqrt);
 #endif
 
     return 1;
@@ -135,7 +139,7 @@ static int vector_floor(lua_State* L)
 #if LUA_VECTOR_SIZE == 4
     lua_pushvector(L, luai_floor(v[0]), luai_floor(v[1]), luai_floor(v[2]), luai_floor(v[3]));
 #else
-    pushvectorlike(L, 1, luai_floor(v[0]), luai_floor(v[1]), luai_floor(v[2]));
+    pushvectorlike(L, 1, 1, luai_floor(v[0]), luai_floor(v[1]), luai_floor(v[2]));
 #endif
 
     return 1;
@@ -148,7 +152,7 @@ static int vector_ceil(lua_State* L)
 #if LUA_VECTOR_SIZE == 4
     lua_pushvector(L, luai_ceil(v[0]), luai_ceil(v[1]), luai_ceil(v[2]), luai_ceil(v[3]));
 #else
-    pushvectorlike(L, 1, luai_ceil(v[0]), luai_ceil(v[1]), luai_ceil(v[2]));
+    pushvectorlike(L, 1, 1, luai_ceil(v[0]), luai_ceil(v[1]), luai_ceil(v[2]));
 #endif
 
     return 1;
@@ -161,7 +165,7 @@ static int vector_abs(lua_State* L)
 #if LUA_VECTOR_SIZE == 4
     lua_pushvector(L, luai_fabs(v[0]), luai_fabs(v[1]), luai_fabs(v[2]), luai_fabs(v[3]));
 #else
-    pushvectorlike(L, 1, luai_fabs(v[0]), luai_fabs(v[1]), luai_fabs(v[2]));
+    pushvectorlike(L, 1, 1, luai_fabs(v[0]), luai_fabs(v[1]), luai_fabs(v[2]));
 #endif
 
     return 1;
@@ -174,7 +178,7 @@ static int vector_sign(lua_State* L)
 #if LUA_VECTOR_SIZE == 4
     lua_pushvector(L, luai_sign(v[0]), luai_sign(v[1]), luai_sign(v[2]), luai_sign(v[3]));
 #else
-    pushvectorlike(L, 1, luai_sign(v[0]), luai_sign(v[1]), luai_sign(v[2]));
+    pushvectorlike(L, 1, 1, luai_sign(v[0]), luai_sign(v[1]), luai_sign(v[2]));
 #endif
 
     return 1;
@@ -195,7 +199,7 @@ static int vector_clamp(lua_State* L)
         L, luai_clamp(v[0], min[0], max[0]), luai_clamp(v[1], min[1], max[1]), luai_clamp(v[2], min[2], max[2]), luai_clamp(v[3], min[3], max[3])
     );
 #else
-    pushvectorlike(L, 1, luai_clamp(v[0], min[0], max[0]), luai_clamp(v[1], min[1], max[1]), luai_clamp(v[2], min[2], max[2]));
+    pushvectorlike(L, 1, 3, luai_clamp(v[0], min[0], max[0]), luai_clamp(v[1], min[1], max[1]), luai_clamp(v[2], min[2], max[2]));
 #endif
 
     return 1;
@@ -231,7 +235,7 @@ static int vector_min(lua_State* L)
 #if LUA_VECTOR_SIZE == 4
     lua_pushvector(L, result[0], result[1], result[2], result[3]);
 #else
-    pushvectorlike(L, 1, result[0], result[1], result[2]);
+    pushvectorlike(L, 1, lua_gettop(L), result[0], result[1], result[2]);
 #endif
 
     return 1;
@@ -267,7 +271,7 @@ static int vector_max(lua_State* L)
 #if LUA_VECTOR_SIZE == 4
     lua_pushvector(L, result[0], result[1], result[2], result[3]);
 #else
-    pushvectorlike(L, 1, result[0], result[1], result[2]);
+    pushvectorlike(L, 1, lua_gettop(L), result[0], result[1], result[2]);
 #endif
 
     return 1;
@@ -314,7 +318,7 @@ static int vector_lerp(lua_State* L)
 #if LUA_VECTOR_SIZE == 4
     lua_pushvector(L, luai_lerp(a[0], b[0], t), luai_lerp(a[1], b[1], t), luai_lerp(a[2], b[2], t), luai_lerp(a[3], b[3], t));
 #else
-    pushvectorlike(L, 1, luai_lerp(a[0], b[0], t), luai_lerp(a[1], b[1], t), luai_lerp(a[2], b[2], t));
+    pushvectorlike(L, 1, 2, luai_lerp(a[0], b[0], t), luai_lerp(a[1], b[1], t), luai_lerp(a[2], b[2], t));
 #endif
 
     return 1;

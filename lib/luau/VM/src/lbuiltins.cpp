@@ -1621,7 +1621,7 @@ static int luauF_vectorclamp(lua_State* L, StkId res, TValue* arg0, int nresults
                 luai_clamp(v[3], min[3], max[3])
             );
 #else
-            setvvaluet(L, res, luai_clamp(v[0], min[0], max[0]), luai_clamp(v[1], min[1], max[1]), luai_clamp(v[2], min[2], max[2]), 0.0, vectortag(arg0));
+            setvvaluet(L, res, luai_clamp(v[0], min[0], max[0]), luai_clamp(v[1], min[1], max[1]), luai_clamp(v[2], min[2], max[2]), 0.0, vectortagmerge(vectortag2(arg0, args), args + 1));
 #endif
 
             return 1;
@@ -1639,6 +1639,7 @@ static int luauF_vectormin(lua_State* L, StkId res, TValue* arg0, int nresults, 
         const LUA_VECTOR_TYPE* b = vvalue(args);
 
         LUA_VECTOR_TYPE result[4];
+        [[maybe_unused]] int tag = vectortag2(arg0, args); // unused without LUA_VECTOR_KINDS
 
         result[0] = (b[0] < a[0]) ? b[0] : a[0];
         result[1] = (b[1] < a[1]) ? b[1] : a[1];
@@ -1656,6 +1657,7 @@ static int luauF_vectormin(lua_State* L, StkId res, TValue* arg0, int nresults, 
                 return -1;
 
             const LUA_VECTOR_TYPE* c = vvalue(args + (i - 2));
+            tag = vectortagmerge(tag, args + (i - 2));
 
             result[0] = (c[0] < result[0]) ? c[0] : result[0];
             result[1] = (c[1] < result[1]) ? c[1] : result[1];
@@ -1665,7 +1667,7 @@ static int luauF_vectormin(lua_State* L, StkId res, TValue* arg0, int nresults, 
 #endif
         }
 
-        setvvaluet(L, res, result[0], result[1], result[2], result[3], vectortag(arg0));
+        setvvaluet(L, res, result[0], result[1], result[2], result[3], tag);
         return 1;
     }
 
@@ -1680,6 +1682,7 @@ static int luauF_vectormax(lua_State* L, StkId res, TValue* arg0, int nresults, 
         const LUA_VECTOR_TYPE* b = vvalue(args);
 
         LUA_VECTOR_TYPE result[4];
+        [[maybe_unused]] int tag = vectortag2(arg0, args); // unused without LUA_VECTOR_KINDS
 
         result[0] = (b[0] > a[0]) ? b[0] : a[0];
         result[1] = (b[1] > a[1]) ? b[1] : a[1];
@@ -1697,6 +1700,7 @@ static int luauF_vectormax(lua_State* L, StkId res, TValue* arg0, int nresults, 
                 return -1;
 
             const LUA_VECTOR_TYPE* c = vvalue(args + (i - 2));
+            tag = vectortagmerge(tag, args + (i - 2));
 
             result[0] = (c[0] > result[0]) ? c[0] : result[0];
             result[1] = (c[1] > result[1]) ? c[1] : result[1];
@@ -1706,7 +1710,7 @@ static int luauF_vectormax(lua_State* L, StkId res, TValue* arg0, int nresults, 
 #endif
         }
 
-        setvvaluet(L, res, result[0], result[1], result[2], result[3], vectortag(arg0));
+        setvvaluet(L, res, result[0], result[1], result[2], result[3], tag);
         return 1;
     }
 

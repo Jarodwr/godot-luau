@@ -472,6 +472,9 @@ LUA_API void lua_userdatadirectfield_setnumber(void* result, double n);
 LUA_API void lua_userdatadirectfield_setvector(void* result, LUA_VECTOR_TYPE x, LUA_VECTOR_TYPE y, LUA_VECTOR_TYPE z, LUA_VECTOR_TYPE w);
 #else
 LUA_API void lua_userdatadirectfield_setvector(void* result, LUA_VECTOR_TYPE x, LUA_VECTOR_TYPE y, LUA_VECTOR_TYPE z);
+#if LUA_VECTOR_KINDS
+LUA_API void lua_userdatadirectfield_setvector2(void* result, LUA_VECTOR_TYPE x, LUA_VECTOR_TYPE y); // Godot fork (GODOT.md)
+#endif
 #endif
 LUA_API void lua_userdatadirectfield_setboolean(void* result, int b);
 LUA_API void lua_userdatadirectfield_setinteger64(void* result, int64_t n);

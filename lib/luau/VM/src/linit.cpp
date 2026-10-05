@@ -103,6 +103,20 @@ void luaL_sandbox(lua_State* L)
         {
             lua_pop(L, 1);
         }
+
+#if LUA_VECTOR_KINDS
+        // Godot fork (GODOT.md): 2D vectors have their own metatable
+        lua_pushvector2(L, 0.0f, 0.0f);
+        if (lua_getmetatable(L, -1))
+        {
+            lua_setreadonly(L, -1, true);
+            lua_pop(L, 2);
+        }
+        else
+        {
+            lua_pop(L, 1);
+        }
+#endif
     }
 
     // set globals to readonly and activate safeenv since the env is immutable

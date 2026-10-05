@@ -520,6 +520,8 @@ typedef struct LuaNode
 #if LUA_VECTOR_KINDS
 #define vectortag(o) ttype(o)
 #define vectortag2(a, b) ((ttype(a) == LUA_TVECTOR2 && ttype(b) == LUA_TVECTOR2) ? LUA_TVECTOR2 : LUA_TVECTOR)
+// A tag so far, combined with one more vector operand
+#define vectortagmerge(tag, o) (((tag) == LUA_TVECTOR2 && ttype(o) == LUA_TVECTOR2) ? LUA_TVECTOR2 : LUA_TVECTOR)
 #define case_vector2 case LUA_TVECTOR2:
 #define vectorfields(o) (ttype(o) == LUA_TVECTOR2 ? 2u : unsigned(LUA_VECTOR_SIZE))
 // The tag is computed first: obj may be one of the operands it depends on
@@ -534,6 +536,7 @@ typedef struct LuaNode
 #else
 #define vectortag(o) LUA_TVECTOR
 #define vectortag2(a, b) LUA_TVECTOR
+#define vectortagmerge(tag, o) LUA_TVECTOR
 #define case_vector2
 #define vectorfields(o) unsigned(LUA_VECTOR_SIZE)
 #define setvvaluet(L, obj, x, y, z, w, tag) setvvalue(L, obj, x, y, z, w)

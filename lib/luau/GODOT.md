@@ -26,8 +26,9 @@ receive the wrong type.
   - The two-argument constructor (`vector.create(x, y)`, or the compiler's
     `vectorCtor` with two arguments) makes a `LUA_TVECTOR2`.
   - Arithmetic gives a `LUA_TVECTOR2` only when every vector operand is one.
-    The `vector` library keeps its input's type, and `vector.cross` is
-    always 3D.
+    The `vector` library follows the same rule over its vector arguments
+    (`min` and `max` with any number of them, `clamp`, `lerp`), in both its
+    fast calls and its library functions. `vector.cross` is always 3D.
   - `==` and table keys distinguish the two types (Luau compares types first).
   - Each type has its own metatable, so the host can give Vector2 and
     Vector3 their own methods. The `vector` library gives both its own
@@ -36,8 +37,13 @@ receive the wrong type.
   - Field access on a `LUA_TVECTOR2` covers `x` and `y` (in the interpreter
     and in the library's `__index`). Other names go to the metatable.
   - A `LUA_TVECTOR2` prints two components.
-- **C API:** `lua_pushvector2(L, x, y)`, `lua_type` returns `LUA_TVECTOR2`,
-  and `lua_isvector` and `lua_tovector` accept both types.
+- **C API:**
+  - `lua_pushvector2(L, x, y)`;
+  - `lua_userdatadirectfield_setvector2(result, x, y)`;
+  - `lua_type` returns `LUA_TVECTOR2`;
+  - `lua_isvector` and `lua_tovector` accept both types.
+- **Sandbox:** `luaL_sandbox` freezes the 2D vector metatable too (with
+  `LuauSandboxFreezesVectorMetatable`).
 - **Compiler:** with the option on, two-argument constructor calls with
   constant arguments aren't folded into bytecode constants (a constant has no
   kind). They're built at run time by the constructor's fast call.
@@ -59,9 +65,22 @@ receive the wrong type.
 - `CMakeLists.txt`.
 
 **Tests.**
-- **New:** `tests/conformance/vector_kinds.luau` and the `VectorKindsApi`
-  test case (`tests/Conformance.test.cpp`). They run only when the option is
-  on, at -O0, -O1 and -O2.
+- **New** (only with the option on):
+  - `tests/conformance/vector_kinds.luau` runs at -O0, -O1 and -O2, each with
+    both table lookup implementations (`DFFlag::LuauSplitTableLookups` off
+    and on). It has examples, and a randomized check of every vector
+    operation on random kinds against the rule and a double-precision
+    reference. Library functions are called both as fast calls and through a
+    table, so the two implementations are compared.
+  - `VectorKindsApi` covers the C API and the sandbox.
+  - `handler_setvector2_result` covers direct fields.
+- **Mutation-tested:** each of these was broken on purpose and the new tests
+  failed:
+  - arithmetic, constructor and library kind rules;
+  - z of 2D results;
+  - table keys in the split lookup;
+  - equality;
+  - the sandbox freeze.
 - **Option off:** every upstream test passes.
 - **Option on:** three upstream tests fail, as they test the behaviour this
   patch changes:

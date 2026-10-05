@@ -2251,6 +2251,13 @@ void lua_userdatadirectfield_setvector(void* result, LUA_VECTOR_TYPE x, LUA_VECT
 }
 #endif
 
+#if LUA_VECTOR_KINDS
+void lua_userdatadirectfield_setvector2(void* result, LUA_VECTOR_TYPE x, LUA_VECTOR_TYPE y)
+{
+    setvvaluet((lua_State*)nullptr, static_cast<TValue*>(result), x, y, LUA_VECTOR_TYPE(0.0), LUA_VECTOR_TYPE(0.0), LUA_TVECTOR2);
+}
+#endif
+
 void lua_userdatadirectfield_setboolean(void* result, int b)
 {
     TValue* slot = LUA_VECTOR_DOUBLE ? static_cast<DirectFieldResult*>(result)->slot : static_cast<TValue*>(result);
