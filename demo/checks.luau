@@ -59,6 +59,15 @@ function Checks:strict_vector_checks()
 	local n2 = Node2D.new()
 	local result = {
 		ctor2_3 = err(function() return Vector2(1, 2, 3) end),
+		-- two arguments in the source that expand to three at run time
+		ctor2_call = err(function()
+			local function rest() return 2, 3 end
+			return Vector2(1, rest())
+		end),
+		ctor2_varargs = err(function()
+			local function spread(...) return Vector2(1, ...) end
+			return spread(2, 3)
+		end),
 		ctor3_2 = err(function() return Vector3(1, 2) end),
 		ctor2_empty = Vector2(),
 		ctor2_from_i = Vector2(Vector2i(1, 2)),

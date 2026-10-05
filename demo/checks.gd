@@ -76,6 +76,7 @@ func _initialize() -> void:
 	# Strict vector dimensions (ADR 0045)
 	var sv = a.strict_vector_checks()
 	check(sv.ctor2_3 != "no error" and sv.ctor3_2 != "no error", "Vector2 with three numbers and Vector3 with two are errors (%s / %s)" % [sv.ctor2_3, sv.ctor3_2])
+	check(sv.ctor2_call != "no error" and sv.ctor2_varargs != "no error", "Vector2(1, f()) and Vector2(1, ...) giving three numbers are errors (%s / %s)" % [sv.ctor2_call, sv.ctor2_varargs])
 	check(typeof(sv.ctor2_empty) == TYPE_VECTOR2 and sv.ctor2_from_i == Vector2(1, 2) and typeof(sv.ctor2_from_i) == TYPE_VECTOR2, "Vector2() and Vector2(Vector2i)")
 	check(sv.ctor3_from_i == Vector3(1, 2, 3) and typeof(sv.ctor3_from_i) == TYPE_VECTOR3, "Vector3(Vector3i)")
 	check("Vector2 where a Vector3 is expected" in sv.prop3, "a Vector2 into a Vector3 property is an error (%s)" % sv.prop3)

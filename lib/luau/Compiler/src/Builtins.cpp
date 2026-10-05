@@ -466,9 +466,15 @@ struct BuiltinVisitor : AstVisitor
         if (bfid == LBF_SELECT_VARARG && !(node->args.size == 2 && node->args.data[1]->is<AstExprVarargs>()))
             bfid = -1;
 
-        // Godot fork (GODOT.md): with vectorCtorArgs, other argument counts call the function itself
-        if (options.vectorCtorArgs && bfid == LBF_VECTOR && int(node->args.size) != options.vectorCtorArgs && isVectorCtor(builtin, options))
-            bfid = -1;
+        // Godot fork (GODOT.md): with vectorCtorArgs, other argument counts call the function itself. A call or ... as the
+        // last argument can expand to more values at run time, so those calls aren't fast calls either
+        if (options.vectorCtorArgs && bfid == LBF_VECTOR && isVectorCtor(builtin, options))
+        {
+            AstExpr* last = node->args.size > 0 ? node->args.data[node->args.size - 1] : nullptr;
+
+            if (int(node->args.size) != options.vectorCtorArgs || (last && (last->is<AstExprCall>() || last->is<AstExprVarargs>())))
+                bfid = -1;
+        }
 
         if (bfid >= 0)
             result[node] = bfid;

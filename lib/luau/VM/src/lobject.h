@@ -518,6 +518,7 @@ typedef struct LuaNode
 ** LUA_VECTOR_KINDS these are plain LUA_TVECTOR and setvvalue.
 */
 #if LUA_VECTOR_KINDS
+static_assert(LUA_TVECTOR2 == LUA_TVECTOR + 1, "lua_isvector tests both types with one comparison");
 #define vectortag(o) ttype(o)
 #define vectortag2(a, b) ((ttype(a) == LUA_TVECTOR2 && ttype(b) == LUA_TVECTOR2) ? LUA_TVECTOR2 : LUA_TVECTOR)
 // A tag so far, combined with one more vector operand
@@ -530,8 +531,9 @@ typedef struct LuaNode
 #define setvvaluet(L, obj, x, y, z, w, tag) \
     { \
         int i_tag = (tag); \
-        setvvalue(L, obj, x, y, (i_tag == LUA_TVECTOR2 ? 0.0f : float(z)), w); \
-        (obj)->tt = i_tag; \
+        TValue* i_ot = (obj); \
+        setvvalue(L, i_ot, x, y, (i_tag == LUA_TVECTOR2 ? 0.0f : float(z)), w); \
+        i_ot->tt = i_tag; \
     }
 #else
 #define vectortag(o) LUA_TVECTOR

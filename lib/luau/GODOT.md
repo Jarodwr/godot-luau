@@ -11,6 +11,11 @@ changes of one line each where possible, so conflicts with upstream stay
 small. After a rebase, run the conformance tests with each option on and off
 (see each patch's "Tests").
 
+With `LUAU_VECTOR_KINDS` on, the type tags fill the 4-bit tag in table keys
+(`TKey::tt`: `LUA_TDEADKEY` is 15). If upstream adds a type, the build fails
+on the `static_assert` in `ltable.cpp` ("not enough bits for tt"), and the
+bitfield has to be widened.
+
 ## Vector kinds (`LUAU_VECTOR_KINDS`, branch `godot-vector2`)
 
 **Why.** Godot has Vector2 and Vector3. Luau has one `vector` type, so a
@@ -31,8 +36,8 @@ receive the wrong type.
     fast calls and its library functions. `vector.cross` is always 3D.
   - `==` and table keys distinguish the two types (Luau compares types first).
   - Each type has its own metatable, so the host can give Vector2 and
-    Vector3 their own methods. The `vector` library gives both its own
-    metatable.
+    Vector3 their own methods. The `vector` library sets its metatable on
+    both.
   - A 2D result's z is always 0 (`v2 / v2` doesn't leave NaN in it).
   - Field access on a `LUA_TVECTOR2` covers `x` and `y` (in the interpreter
     and in the library's `__index`). Other names go to the metatable.
@@ -50,10 +55,21 @@ receive the wrong type.
 - **Compile option `vectorCtorArgs`** (independent of the build option, 0 by
   default): when non-zero, a `vectorCtor` call is a fast call only with
   exactly that many arguments, and other counts call the function itself.
+  A call or `...` as the last argument isn't a fast call either, as it can
+  expand to more values at run time (`Vector2(1, f())`).
   godot-luau sets `vectorCtor = "Vector2"` and `vectorCtorArgs = 2`, so
   `Vector2(1, 2, 3)` reaches its own constructor, which rejects it, instead
   of silently making a 3D vector. Added at the end of `lua_CompileOptions`
   and `Luau::CompileOptions`.
+- **For hosts:**
+  - Type numbers after `LUA_TVECTOR` move up by one, so everything that
+    includes `lua.h` must be built with the same option. The CMake targets
+    pass it on (`PUBLIC` on `Luau.VM` and `Luau.Compiler`).
+  - Code that switches on `lua_type` needs a `LUA_TVECTOR2` case.
+  - `lua_setmetatable` on a vector sets the metatable of that vector's type
+    only; set it on a 2D vector too.
+  - Bytecode must come from a compiler built with the option. Otherwise
+    `vector.create(1, 2)` is folded into a 3D constant.
 - **Not supported:**
   - Native code (`Luau.CodeGen`): with the option on it reports itself as
     unsupported (`luau_codegen_supported()` returns 0), so code stays in the
@@ -63,12 +79,15 @@ receive the wrong type.
 **Where.**
 - `luaconf.h`: the option.
 - `lua.h`: the type, `lua_isvector` and `lua_pushvector2`.
-- `lobject.h`: `ttisvector`, `vectortag`, `vectortag2`, `case_vector2` and
-  `setvvaluet`.
+- `lobject.h`: `ttisvector`, `vectortag`, `vectortag2`, `vectortagmerge`,
+  `vectorfields`, `case_vector2` and `setvvaluet`.
 - One-line changes in `lvmexecute.cpp`, `lvmutils.cpp`, `lbuiltins.cpp`,
-  `lapi.cpp`, `lobject.cpp`, `ltable.cpp`, `laux.cpp`, `lgcdebug.cpp` and
-  `ltm.cpp`.
-- `Compiler/src/BuiltinFolding.cpp`.
+  `lapi.cpp`, `lobject.cpp`, `ltable.cpp`, `laux.cpp` and `ltm.cpp`.
+- `lveclib.cpp` (the library functions and metatable) and `linit.cpp` (the
+  sandbox).
+- `Compiler/src/BuiltinFolding.cpp`; `vectorCtorArgs` in
+  `Compiler/src/Builtins.cpp`, `luacode.h` and `Luau/Compiler.h`.
+- `CodeGen/src/CodeGen.cpp` (`isSupported`).
 - `CMakeLists.txt`.
 
 **Tests.**

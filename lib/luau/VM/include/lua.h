@@ -525,7 +525,7 @@ LUA_API int lua_unref(lua_State* L, int ref);
 #define lua_isboolean(L, n) (lua_type(L, (n)) == LUA_TBOOLEAN)
 #define lua_isinteger64(L, n) (lua_type(L, (n)) == LUA_TINTEGER)
 #if LUA_VECTOR_KINDS
-#define lua_isvector(L, n) (lua_type(L, (n)) == LUA_TVECTOR || lua_type(L, (n)) == LUA_TVECTOR2)
+#define lua_isvector(L, n) ((unsigned)(lua_type(L, (n)) - LUA_TVECTOR) <= 1u) // LUA_TVECTOR or LUA_TVECTOR2, n evaluated once
 #else
 #define lua_isvector(L, n) (lua_type(L, (n)) == LUA_TVECTOR)
 #endif
