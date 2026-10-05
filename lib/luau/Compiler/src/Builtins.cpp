@@ -67,6 +67,14 @@ Builtin getBuiltin(AstExpr* node, const DenseHashMap<AstName, Global>& globals, 
     }
 }
 
+// Godot fork (GODOT.md): for vectorCtorArgs
+static bool isVectorCtor(const Builtin& builtin, const CompileOptions& options)
+{
+    if (!options.vectorCtor)
+        return false;
+    return options.vectorLib ? builtin.isMethod(options.vectorLib, options.vectorCtor) : builtin.isGlobal(options.vectorCtor);
+}
+
 static int getBuiltinFunctionId(const Builtin& builtin, const CompileOptions& options)
 {
     if (builtin.isGlobal("assert"))
@@ -456,6 +464,10 @@ struct BuiltinVisitor : AstVisitor
 
         // getBuiltinFunctionId optimistically assumes all select() calls are builtin but actually the second argument must be a vararg
         if (bfid == LBF_SELECT_VARARG && !(node->args.size == 2 && node->args.data[1]->is<AstExprVarargs>()))
+            bfid = -1;
+
+        // Godot fork (GODOT.md): with vectorCtorArgs, other argument counts call the function itself
+        if (options.vectorCtorArgs && bfid == LBF_VECTOR && int(node->args.size) != options.vectorCtorArgs && isVectorCtor(builtin, options))
             bfid = -1;
 
         if (bfid >= 0)

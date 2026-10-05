@@ -315,9 +315,9 @@ bool to_native(lua_State *L, int index, ArgType type, NativeSlot &slot, GDExtens
 				unpack_vector2i(packed_bits(L, index, LUTAG_VECTOR2I), reinterpret_cast<int32_t *>(slot.bytes));
 				return true;
 			}
-			const float *v = lua_tovector(L, index);
-			if (v == nullptr) return false;
 			int n = (type == T_VECTOR2 || type == T_VECTOR2I) ? 2 : 3;
+			const float *v = typed_vector(L, index, n == 2);
+			if (v == nullptr) return false;
 			for (int i = 0; i < n; i++) {
 				if (type == T_VECTOR2 || type == T_VECTOR3) {
 					reinterpret_cast<float *>(slot.bytes)[i] = v[i];
@@ -488,7 +488,7 @@ static bool to_simple(lua_State *L, int index, ArgType type, SimpleValue &r_valu
 	switch (type) {
 		case T_VECTOR2:
 		case T_VECTOR3: {
-			const float *v = lua_tovector(L, index);
+			const float *v = typed_vector(L, index, type == T_VECTOR2);
 			if (v == nullptr) return false;
 			r_value.v[0] = v[0];
 			r_value.v[1] = v[1];
@@ -617,7 +617,7 @@ static bool generic_call(lua_State *L, Variant &object, const StringName &name, 
 	});
 	if (error.error != GDEXTENSION_CALL_OK) {
 		CharString n = String(name).utf8();
-		lua_pushfstring(L, "error %d calling '%s'", (int)error.error, n.get_data());
+		lua_pushfstring(L, "%s: %s", n.get_data(), call_error_text(error).utf8().get_data());
 		return false;
 	}
 	push_result(L, result);
@@ -674,7 +674,7 @@ static bool fast_set(lua_State *L, GDExtensionObjectPtr object, const Method &se
 	switch (setter.info->args[0]) {
 		case T_VECTOR2:
 		case T_VECTOR3: {
-			const float *v = lua_tovector(L, index);
+			const float *v = typed_vector(L, index, setter.info->args[0] == T_VECTOR2);
 			if (v == nullptr) return false;
 			value.v[0] = v[0];
 			value.v[1] = v[1];
@@ -1074,7 +1074,7 @@ static int variant_namecall(lua_State *L) {
 			push_result(L, result);
 		} else {
 			CharString n = String(method).utf8();
-			lua_pushfstring(L, "error %d calling '%s'", (int)error.error, n.get_data());
+			lua_pushfstring(L, "%s: %s", n.get_data(), call_error_text(error).utf8().get_data());
 		}
 	}
 	// Raised after the Godot values above are destroyed
@@ -1654,6 +1654,7 @@ static lua_CompileOptions *compile_options() {
 		o.optimizationLevel = 2;
 		o.debugLevel = 1;
 		o.vectorCtor = "Vector2";
+		o.vectorCtorArgs = 2;  // other argument counts reach vector2_construct (docs/adr/0045)
 		return o;
 	}();
 	return &options;

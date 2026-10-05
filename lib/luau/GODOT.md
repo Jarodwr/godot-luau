@@ -47,6 +47,13 @@ receive the wrong type.
 - **Compiler:** with the option on, two-argument constructor calls with
   constant arguments aren't folded into bytecode constants (a constant has no
   kind). They're built at run time by the constructor's fast call.
+- **Compile option `vectorCtorArgs`** (independent of the build option, 0 by
+  default): when non-zero, a `vectorCtor` call is a fast call only with
+  exactly that many arguments, and other counts call the function itself.
+  godot-luau sets `vectorCtor = "Vector2"` and `vectorCtorArgs = 2`, so
+  `Vector2(1, 2, 3)` reaches its own constructor, which rejects it, instead
+  of silently making a 3D vector. Added at the end of `lua_CompileOptions`
+  and `Luau::CompileOptions`.
 - **Not supported:**
   - Native code (`Luau.CodeGen`): with the option on it reports itself as
     unsupported (`luau_codegen_supported()` returns 0), so code stays in the
@@ -74,6 +81,8 @@ receive the wrong type.
     table, so the two implementations are compared.
   - `VectorKindsApi` covers the C API and the sandbox.
   - `handler_setvector2_result` covers direct fields.
+  - `VectorCtorArgs` covers `vectorCtorArgs`; it runs with the option on and
+    off.
 - **Mutation-tested:** each of these was broken on purpose and the new tests
   failed:
   - arithmetic, constructor and library kind rules;

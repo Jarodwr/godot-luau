@@ -73,6 +73,16 @@ func _initialize() -> void:
 	check(typeof(vk.normalized2) == TYPE_VECTOR2 and vk.normalized2.is_equal_approx(Vector2(0.6, 0.8)), "Vector2 methods return Vector2")
 	check(vk.get("v2_z") == null, "a Vector2 has no z")
 
+	# Strict vector dimensions (ADR 0045)
+	var sv = a.strict_vector_checks()
+	check(sv.ctor2_3 != "no error" and sv.ctor3_2 != "no error", "Vector2 with three numbers and Vector3 with two are errors (%s / %s)" % [sv.ctor2_3, sv.ctor3_2])
+	check(typeof(sv.ctor2_empty) == TYPE_VECTOR2 and sv.ctor2_from_i == Vector2(1, 2) and typeof(sv.ctor2_from_i) == TYPE_VECTOR2, "Vector2() and Vector2(Vector2i)")
+	check(sv.ctor3_from_i == Vector3(1, 2, 3) and typeof(sv.ctor3_from_i) == TYPE_VECTOR3, "Vector3(Vector3i)")
+	check("Vector2 where a Vector3 is expected" in sv.prop3, "a Vector2 into a Vector3 property is an error (%s)" % sv.prop3)
+	check("Vector3 where a Vector2 is expected" in sv.prop2, "a Vector3 into a Vector2 property is an error (%s)" % sv.prop2)
+	check("Vector2 where a Vector3 is expected" in sv.arg3 and sv.arg2_ok == "no error", "engine arguments check dimensions (%s)" % sv.arg3)
+	check("should be Vector2i" in sv.builtin_arg and sv.builtin_arg_ok == true, "builtin method arguments check dimensions (Godot's check); a Vector2 still converts to Vector2i (%s)" % sv.builtin_arg)
+
 	# Opaque 64-bit ints (ADR 0043)
 	var big = a.int64_checks()
 	var id1: int = big.refs[0].get_instance_id()

@@ -72,6 +72,10 @@ struct CompileOptions
 
     // null-terminated array of library functions that should not be compiled into a built-in fastcall ("name" "lib.name")
     const char* const* disabledBuiltins = nullptr;
+
+    // Godot fork (GODOT.md): when non-zero, a vectorCtor call is a fast call only with exactly this many arguments; other
+    // counts call the function itself (so a host's 2D constructor can reject three components)
+    int vectorCtorArgs = 0;
 };
 
 class CompileError : public std::exception

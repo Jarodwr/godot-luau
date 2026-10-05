@@ -958,8 +958,9 @@ static bool construct_from_numbers(lua_State *L, Variant::Type type, int argc) {
 }
 
 // Type(...): Godot picks the constructor matching the arguments
-static int builtin_construct(lua_State *L) {
-	Variant::Type type = (Variant::Type)lua_tointeger(L, lua_upvalueindex(1));
+// Godot's constructor for `type` with the arguments from index 2: accepts
+// what Godot's own constructors accept and reports the rest with Godot's error
+static int construct_via_engine(lua_State *L, Variant::Type type) {
 	int argc = lua_gettop(L) - 1;  // 1 is the type table
 	if (variant_layout_checked() && construct_from_numbers(L, type, argc)) {
 		return 1;
@@ -974,6 +975,10 @@ static int builtin_construct(lua_State *L) {
 		call_with_args(L, 2, argc, result, error, [&](VariantArgs &args, VariantResult &r, GDExtensionCallError &e) {
 			gdextension_interface::variant_construct((GDExtensionVariantType)type, r.uninitialized(), args.pointers(), argc, &e);
 		});
+		if (error.error == GDEXTENSION_CALL_ERROR_INVALID_METHOD) {
+			// Godot's code for "no constructor matches"
+			luaL_error(L, "no %s constructor takes these arguments", type_name(type));
+		}
 		status = finish_call(L, result, error, type_name(type));
 	}
 	if (status < 0) {
@@ -982,14 +987,38 @@ static int builtin_construct(lua_State *L) {
 	return status;
 }
 
+static int builtin_construct(lua_State *L) {
+	return construct_via_engine(L, (Variant::Type)lua_tointeger(L, lua_upvalueindex(1)));
+}
+
+static bool numbers_from(lua_State *L, int first, int count) {
+	for (int i = first; i < first + count; i++) {
+		if (lua_type(L, i) != LUA_TNUMBER) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// Vector2() and Vector2(x, y) directly; anything else (Vector2(Vector2i),
+// Vector2(1, 2, 3)…) through Godot's constructor, which rejects what Godot
+// rejects (docs/adr/0045)
 static int vector2_construct(lua_State *L) {
-	lua_pushvector2(L, (float)luaL_optnumber(L, 2, 0), (float)luaL_optnumber(L, 3, 0));
-	return 1;
+	int argc = lua_gettop(L) - 1;
+	if (argc == 0 || (argc == 2 && numbers_from(L, 2, 2))) {
+		lua_pushvector2(L, (float)luaL_optnumber(L, 2, 0), (float)luaL_optnumber(L, 3, 0));
+		return 1;
+	}
+	return construct_via_engine(L, Variant::VECTOR2);
 }
 
 static int vector3_construct(lua_State *L) {
-	lua_pushvector(L, (float)luaL_optnumber(L, 2, 0), (float)luaL_optnumber(L, 3, 0), (float)luaL_optnumber(L, 4, 0));
-	return 1;
+	int argc = lua_gettop(L) - 1;
+	if (argc == 0 || (argc == 3 && numbers_from(L, 2, 3))) {
+		lua_pushvector(L, (float)luaL_optnumber(L, 2, 0), (float)luaL_optnumber(L, 3, 0), (float)luaL_optnumber(L, 4, 0));
+		return 1;
+	}
+	return construct_via_engine(L, Variant::VECTOR3);
 }
 
 // Type.method(...) for static methods

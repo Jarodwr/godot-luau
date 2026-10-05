@@ -2,6 +2,7 @@
 // argument and result storage for engine calls, and value conversions.
 #pragma once
 
+#include <lualib.h>
 #include "api.h"
 
 #include <godot_cpp/variant/node_path.hpp>
@@ -217,6 +218,21 @@ void call_with_args(lua_State *L, int first, int argc, VariantResult &result, GD
 // Godot's Vector2 is Luau's 2D vector type (LUA_TVECTOR2), Vector3 the 3D one
 inline bool is_vector(int lua_type) {
 	return lua_type == LUA_TVECTOR || lua_type == LUA_TVECTOR2;
+}
+
+// A vector for a typed 2D (Vector2, Vector2i) or 3D (Vector3, Vector3i) engine
+// argument or property: null if the value isn't a vector, an error if it's
+// the other dimension. Godot doesn't convert between them, so a mismatch is a
+// bug in the script, not something to convert (docs/adr/0045).
+inline const float *typed_vector(lua_State *L, int index, bool want_2d) {
+	int type = lua_type(L, index);
+	if (!is_vector(type)) {
+		return nullptr;
+	}
+	if ((type == LUA_TVECTOR2) != want_2d) {
+		luaL_error(L, want_2d ? "Vector3 where a Vector2 is expected" : "Vector2 where a Vector3 is expected");
+	}
+	return lua_tovector(L, index);
 }
 
 // Changes whenever the Luau state is closed: callables and other holders of

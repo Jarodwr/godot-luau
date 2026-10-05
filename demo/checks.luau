@@ -49,6 +49,32 @@ function Checks:vector_kind_checks()
 	}
 end
 
+-- Strict vector dimensions (ADR 0045)
+function Checks:strict_vector_checks()
+	local function err(f)
+		local ok, message = pcall(f)
+		return if ok then "no error" else tostring(message)
+	end
+	local n3 = Node3D.new()
+	local n2 = Node2D.new()
+	local result = {
+		ctor2_3 = err(function() return Vector2(1, 2, 3) end),
+		ctor3_2 = err(function() return Vector3(1, 2) end),
+		ctor2_empty = Vector2(),
+		ctor2_from_i = Vector2(Vector2i(1, 2)),
+		ctor3_from_i = Vector3(Vector3i(1, 2, 3)),
+		prop3 = err(function() n3.position = Vector2(1, 2) end),
+		prop2 = err(function() n2.position = Vector3(1, 2, 3) end),
+		arg3 = err(function() n3:translate(Vector2(1, 2)) end),
+		arg2_ok = err(function() n2:translate(Vector2(1, 2)) end),
+		builtin_arg = err(function() return Rect2i(0, 0, 9, 9):has_point(Vector3(1, 1, 1)) end),
+		builtin_arg_ok = Rect2i(0, 0, 9, 9):has_point(Vector2(1, 1)),
+	}
+	n3:free()
+	n2:free()
+	return result
+end
+
 -- Opaque 64-bit ints (ADR 0043)
 function Checks:int64_checks()
 	local r = RefCounted.new()
