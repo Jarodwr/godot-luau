@@ -1,20 +1,17 @@
-# Tool scripts
+# Tool scripts: reloading in the editor
 
-**Area:** Script features
+**Area:** Editor and tooling
 
 ## What
 
-Scripts that run in the editor (`tool = true`).
-
-## Status
-
-`tool = true` in the class table, `_can_instantiate` and placeholder instances
-for non-tool scripts in the editor are implemented
-([ADR 0032](../docs/adr/0032-script-declarations.md)). Not yet checked in the
-editor; reloading running tool scripts is part of hot reload.
+Tool scripts run in the editor, and non-tool scripts get inspector
+placeholders with their exported defaults; both are checked by
+`tools/check_editor.sh`. Not yet checked: editing a running tool script in
+the editor reloads it (the same `_reload` as [ADR 0036](../docs/adr/0036-modules-and-hot-reload.md),
+triggered by the editor rather than the file watcher, which is off in the
+editor).
 
 ## Done when
 
-A tool script draws something in the editor viewport.
-
-Check the benchmark afterwards (`tools/bench.sh`): a feature shouldn't slow existing cases.
+Saving a tool script while its scene is open in the editor updates the
+running node, without reopening the scene.

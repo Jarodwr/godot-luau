@@ -1,21 +1,23 @@
-# class_name / global classes
+# Extending a Luau class by its global name
 
 **Area:** Script features
 
 ## What
 
-Registering a script under a global class name, so it appears in the Create Node dialog and can be used by name from other scripts.
+`extends = "Player"` naming a Luau `class_name`, as GDScript's `extends Player`.
+Today `extends` takes a native class name or a required script's table
+([ADR 0034](../docs/adr/0034-script-inheritance-and-shutdown.md)).
 
-## Status
+`class_name` itself is done and checked in the editor (`tools/check_editor.sh`):
+the editor registers it, and GDScript uses it with `.new()`, static calls,
+constants, `is` and typed variables.
 
-`class_name` and `icon` are declared in the class table and reported through
-`_get_global_name`, `_handles_global_class_type` and `_get_global_class_name`
-([ADR 0032](../docs/adr/0032-script-declarations.md)). Not yet checked in the
-editor. Extending a global class by name (`extends = "Player"`) isn't
-supported.
+## Approach
+
+When `extends` is a string that isn't a native class, look it up in
+`ProjectSettings.get_global_class_list()` and load that script as if required.
 
 ## Done when
 
-A `class_name` script appears in the Create Node dialog and `ClassName.new()` works from GDScript.
-
-Check the benchmark afterwards (`tools/bench.sh`): a feature shouldn't slow existing cases.
+A Luau script extends another by its `class_name`, and the editor shows the
+inheritance.

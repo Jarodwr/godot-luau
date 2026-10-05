@@ -159,7 +159,9 @@ cd demo && "$GODOT_BIN" --headless --path . --script hot_reload.gd
 
 Script errors are reported like GDScript's, with file, line and a Luau
 backtrace ([0037](docs/adr/0037-script-errors.md));
-`GODOT_BIN=… tools/check_errors.sh` checks them.
+`GODOT_BIN=… tools/check_errors.sh` checks them. `tools/check_editor.sh`
+checks editor integration: `class_name` registration and use from GDScript,
+tool scripts in the editor, and inspector placeholders.
 
 ## Design
 

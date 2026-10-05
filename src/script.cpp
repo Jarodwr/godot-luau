@@ -801,7 +801,7 @@ static const GDExtensionMethodInfo *get_method_list_func(Instance *instance, uin
 			arg.name = storage->arg_names[i][a]._native_ptr();
 			arg.class_name = storage->empty._native_ptr();
 			arg.hint_string = storage->empty_hint._native_ptr();
-			arg.usage = PROPERTY_USAGE_DEFAULT;
+			arg.usage = arg.type == GDEXTENSION_VARIANT_TYPE_NIL ? PROPERTY_USAGE_NIL_IS_VARIANT : PROPERTY_USAGE_DEFAULT;
 		}
 		GDExtensionMethodInfo &info = storage->infos[i];
 		info = {};
@@ -1870,13 +1870,17 @@ static Dictionary method_info(const LuauScript::MethodDef &method) {
 	for (int i = 0; i < method.nparams; i++) {
 		Dictionary arg;
 		arg["name"] = "arg" + itos(i + 1);
-		arg["type"] = i < method.arg_types.size() ? method.arg_types[i] : Variant::NIL;
+		Variant::Type type = i < method.arg_types.size() ? method.arg_types[i] : Variant::NIL;
+		arg["type"] = type;
+		arg["usage"] = type == Variant::NIL ? PROPERTY_USAGE_NIL_IS_VARIANT : PROPERTY_USAGE_DEFAULT;
 		args.push_back(arg);
 	}
 	d["args"] = args;
 	d["default_args"] = method.defaults;
 	Dictionary ret;
 	ret["type"] = method.ret_type;
+	// Untyped: any value, not void (GDScript checks this)
+	ret["usage"] = method.has_ret_type ? PROPERTY_USAGE_DEFAULT : PROPERTY_USAGE_NIL_IS_VARIANT;
 	d["return"] = ret;
 	d["flags"] = METHOD_FLAGS_DEFAULT | (method.is_static ? METHOD_FLAG_STATIC : 0);
 	return d;

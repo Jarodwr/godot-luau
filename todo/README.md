@@ -17,8 +17,8 @@ reload ([ADR 0036](../docs/adr/0036-modules-and-hot-reload.md)); script
 errors with location and backtrace ([ADR 0037](../docs/adr/0037-script-errors.md));
 static functions and the remaining overrides ([ADR 0039](../docs/adr/0039-statics-and-remaining-overrides.md)).
 
-- [class_name / global classes](global-classes.md)
-- [Tool scripts](tool-scripts.md)
+- [Extending a Luau class by its global name](global-classes.md)
+- [Tool scripts: reloading in the editor](tool-scripts.md)
 - [RPC configuration](rpc.md)
 
 ## API surface
