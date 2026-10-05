@@ -1736,6 +1736,43 @@ static int variant_len(lua_State *L) {
 
 constexpr int MAX_TABLE_DEPTH = 32;
 
+static Variant table_to_variant(lua_State *L, int index, int depth);
+
+// The Lua value at `index` into `slot`, an element that holds nil (a fresh
+// Array or Dictionary entry): plain values as bytes, without godot-cpp
+// Variant temporaries (each an engine call, docs/adr/0040)
+static void write_element(lua_State *L, int index, Variant *slot, int depth) {
+	if (lua_type(L, index) == LUA_TTABLE && self_table_owner(L, index) == nullptr) {
+		new (slot) Variant(table_to_variant(L, index, depth));  // slot held nil
+	} else if (!write_plain_variant(L, index, slot)) {
+		new (slot) Variant(to_variant(L, index));
+	}
+}
+
+// Whether the table may be a sequence (keys 1..n and nothing else). Usually
+// one lua_next: after key n, a sequence held in the array part has nothing.
+// Lua's length can be any border, so 1..n may still have holes: the caller
+// checks each element.
+static bool is_sequence(lua_State *L, int index, int length) {
+	if (length == 0) {
+		lua_pushnil(L);
+	} else {
+		lua_pushinteger(L, length);
+	}
+	if (!lua_next(L, index)) {
+		return true;
+	}
+	lua_pop(L, 2);
+	// Something after n: count every key (elements may live in the hash part)
+	int count = 0;
+	lua_pushnil(L);
+	while (lua_next(L, index)) {
+		count++;
+		lua_pop(L, 1);
+	}
+	return count == length;
+}
+
 static Variant table_to_variant(lua_State *L, int index, int depth) {
 	index = lua_absindex(L, index);
 	if (depth > MAX_TABLE_DEPTH) {
@@ -1744,25 +1781,42 @@ static Variant table_to_variant(lua_State *L, int index, int depth) {
 	// A sequence (keys 1..n, nothing else) is an Array; anything else a
 	// Dictionary. An empty table is an empty Array.
 	int length = lua_objlen(L, index);
-	int count = 0;
-	lua_pushnil(L);
-	while (lua_next(L, index)) {
-		count++;
-		lua_pop(L, 1);
-	}
-	if (count == length) {
+	if (is_sequence(L, index, length)) {
 		Array array;
+		if (length == 0) {
+			return array;
+		}
+		// Sized once, then each element written in place. Godot keeps the
+		// elements contiguous; checked by the last element's address.
+		array.resize(length);
+		Variant *first = (Variant *)gdextension_interface::array_operator_index(array._native_ptr(), 0);
+		Variant *last = (Variant *)gdextension_interface::array_operator_index(array._native_ptr(), length - 1);
+		bool contiguous = variant_layout_checked() && last == first + (length - 1);
+		bool holes = false;
 		for (int i = 1; i <= length; i++) {
-			lua_rawgeti(L, index, i);
-			array.append(table_aware_to_variant(L, -1, depth + 1));
+			if (lua_rawgeti(L, index, i) == LUA_TNIL) {
+				lua_pop(L, 1);
+				holes = true;  // {1, 2, nil, 4}: a Dictionary
+				break;
+			}
+			Variant *slot = contiguous ? first + (i - 1) : (Variant *)gdextension_interface::array_operator_index(array._native_ptr(), i - 1);
+			if (variant_layout_checked()) {
+				write_element(L, -1, slot, depth + 1);  // the slot holds nil: nothing to destroy
+			} else {
+				*slot = table_aware_to_variant(L, -1, depth + 1);
+			}
 			lua_pop(L, 1);
 		}
-		return array;
+		if (!holes) {
+			return array;
+		}
 	}
 	Dictionary dictionary;
 	lua_pushnil(L);
 	while (lua_next(L, index)) {
-		dictionary[table_aware_to_variant(L, -2, depth + 1)] = table_aware_to_variant(L, -1, depth + 1);
+		Variant key = table_aware_to_variant(L, -2, depth + 1);
+		Variant *slot = (Variant *)gdextension_interface::dictionary_operator_index(dictionary._native_ptr(), key._native_ptr());
+		*slot = table_aware_to_variant(L, -1, depth + 1);
 		lua_pop(L, 1);
 	}
 	return dictionary;

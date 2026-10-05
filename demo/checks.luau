@@ -13,6 +13,23 @@ function Checks:array_write(a) a[0] = 10; return a[0] + a[1] end
 function Checks:array_oob(a) return a[99] end
 
 function Checks:echo(value) return value end
+
+-- Table conversions (ADR 0027, 0041): each shape, compared in checks.gd
+function Checks:tables()
+	local backwards = {}
+	for i = 5, 1, -1 do backwards[i] = i * 10 end  -- a sequence in the hash part
+	local holes = { 1, 2 }
+	holes[4] = 4                                   -- not a sequence
+	return {
+		Array({ 1, 2.5, "s", true, Vector2(1, 2), Vector3(1, 2, 3) }),
+		Array({ { 1, 2 }, { a = 1 } }),
+		Array(backwards),
+		Dictionary(holes),
+		Array({}),
+		Dictionary({ 1, 2, x = 3 }),
+		{ "héllo ✓", { nested = { 1, { 2 } } } },
+	}
+end
 function Checks:concat(a, b) return a .. b end
 function Checks:lua_length(s) return #s end
 

@@ -55,6 +55,24 @@ func _initialize() -> void:
 	check(a.lua_length("✓") == 3, "Lua sees UTF-8 bytes")
 	check(a.echo(&"sname") == "sname", "StringName argument arrives as a string")
 
+	# Table conversions: arrays sized and written in place (ADR 0041)
+	var tables = a.tables()
+	var expected_tables := [
+		[1, 2.5, "s", true, Vector2(1, 2), Vector3(1, 2, 3)],
+		[[1, 2], {"a": 1}],
+		[10, 20, 30, 40, 50],
+		{1: 1, 2: 2, 4: 4},
+		[],
+		{1: 1, 2: 2, "x": 3},
+		["héllo ✓", {"nested": [1, [2]]}],
+	]
+	for k in expected_tables.size():
+		var got_table = tables[k] if tables is Array and k < tables.size() else null
+		check(typeof(got_table) == typeof(expected_tables[k]) and got_table == expected_tables[k],
+			"table conversion %d: %s (got %s)" % [k, expected_tables[k], got_table])
+	check(typeof(tables[0][0]) == TYPE_INT and typeof(tables[0][1]) == TYPE_FLOAT and typeof(tables[0][4]) == TYPE_VECTOR2,
+		"converted element types")
+
 	# API surface (ADRs 0024-0027)
 	var api = a.api_checks()
 	if not api is Dictionary:
