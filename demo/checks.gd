@@ -96,6 +96,8 @@ func _initialize() -> void:
 	var v_fnl_compile = lang.validate_script("(local M {})\n(fn M.f [self]\n  (let [x] x))\nM\n", "res://v.fnl")
 	check(not v_fnl_compile.valid and v_fnl_compile.errors[0].line == 3 and v_fnl_compile.errors[0].column == 8, "Fennel compile errors, with line and column (%s)" % [v_fnl_compile.errors])
 
+	check(a.require_alias_checks(), "require(\"@res/…\") loads the same module as res:// and ./ (ADR 0048)")
+
 	# Shared tables are frozen (ADR 0046)
 	var fz = a.frozen_checks()
 	check(fz.blocked == fz.writes, "writes to libraries, type tables and shared metatables fail (%d of %d)" % [fz.blocked, fz.writes])

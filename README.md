@@ -147,7 +147,7 @@ end
 return Boss
 ```
 
-`require` loads `.luau` and `.fnl` files by path (`res://lib/util`,
+`require` loads `.luau` and `.fnl` files by path (`res://lib/util` or `@res/lib/util`,
 `./util`, `../util`) or dotted name (`lib.util`). Saving a script while the
 game runs reloads it in place: instances keep their fields, and scripts that
 required it reload too
@@ -162,6 +162,42 @@ backtrace ([0037](docs/adr/0037-script-errors.md));
 `GODOT_BIN=… tools/check_errors.sh` checks them. `tools/check_editor.sh`
 checks editor integration: `class_name` registration and use from GDScript,
 tool scripts in the editor, and inspector placeholders.
+
+### Editors
+
+Godot's script editor underlines syntax and compile errors in `.luau` and
+`.fnl` files as you type ([0047](docs/adr/0047-editor-validation.md)).
+
+For completion, hover and type checking in an external editor, use
+[luau-lsp](https://github.com/JohnnyMorganz/luau-lsp) with the Godot API
+definitions the build writes to `addons/godot_luau/bin/godot.d.luau`
+([0048](docs/adr/0048-type-definitions-for-luau-lsp.md)). In VS Code's
+`settings.json`:
+
+```json
+{
+	"luau-lsp.platform.type": "standard",
+	"luau-lsp.types.definitionFiles": { "@godot": "addons/godot_luau/bin/godot.d.luau" },
+	"luau-lsp.fflags.override": { "LuauTarjanChildLimit": "100000" }
+}
+```
+
+And a `.luaurc` at the project root, so `require("@res/…")` (the same as
+`require("res://…")`) is followed:
+
+```json
+{ "aliases": { "res": "." } }
+```
+
+Untyped scripts get completion and checks on the API. In `--!strict` mode,
+type `self` with one line ([example](demo/types/typed_mover.luau)):
+
+```lua
+type Mover = Node2D & typeof(Mover) & { velocity: Vector2 }
+function Mover._process(self: Mover, delta: number) … end
+```
+
+`LUAU_LSP=… tools/check_types.sh` checks the definitions.
 
 ## Design
 
@@ -208,5 +244,5 @@ Missing features are tracked one per file in [`todo/`](todo/README.md).
   printable, but not numbers
   ([0043](docs/adr/0043-opaque-64-bit-integers.md)). A whole number sent where
   Godot takes any type is an `int`.
-- **No RPC, editor features or debugging yet.** One Luau
+- **No RPC, completion inside Godot's editor or debugging yet.** One Luau
   state, main thread only.

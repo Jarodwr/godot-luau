@@ -44,9 +44,11 @@ static std::vector<LuauScript *> loading;
 // Scripts being reloaded now (with their dependents)
 static HashSet<String> reloading_paths;
 
-// A module name to a file: "res://a/b", "./b" or "../b" (relative to the
+// A module name to a file: "res://a/b" (or "@res/a/b", Luau's alias form,
+// which luau-lsp follows: docs/adr/0048), "./b" or "../b" (relative to the
 // requiring file), or "a.b" (from res://). The extension may be left out.
-static String resolve_module(lua_State *L, const String &name) {
+static String resolve_module(lua_State *L, const String &p_name) {
+	String name = p_name.begins_with("@res/") ? "res://" + p_name.substr(5) : p_name;
 	String base;
 	if (name.begins_with("res://")) {
 		base = name;
@@ -107,7 +109,7 @@ static int load_module(lua_State *L, const String &path) {
 // package.loaded (the prelude's require, for Fennel's own modules)
 static int lua_require(lua_State *L) {
 	String name = String::utf8(luaL_checkstring(L, 1));
-	bool is_path = name.begins_with("res://") || name.begins_with("./") || name.begins_with("../");
+	bool is_path = name.begins_with("res://") || name.begins_with("@res/") || name.begins_with("./") || name.begins_with("../");
 	if (!is_path) {
 		// package.loaded, then package.preload (the prelude's require)
 		lua_getglobal(L, "package");

@@ -71,3 +71,4 @@ at the same optimisation level.
 | [0045](0045-strict-vector-dimensions.md) | Vector dimensions are strict at typed engine boundaries | Accepted |
 | [0046](0046-frozen-shared-tables.md) | Shared libraries, type tables and metatables are frozen | Accepted |
 | [0047](0047-editor-validation.md) | The script editor validates Luau and Fennel | Accepted |
+| [0048](0048-type-definitions-for-luau-lsp.md) | Godot API definitions for luau-lsp | Accepted |

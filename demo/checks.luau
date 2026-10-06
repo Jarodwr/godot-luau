@@ -253,6 +253,12 @@ function Checks:elementwise_ops()
 	}
 end
 
+-- require("@res/…") is require("res://…") (ADR 0048: the form luau-lsp follows)
+function Checks:require_alias_checks()
+	local by_alias = require("@res/features/base")
+	return by_alias == require("res://features/base.luau") and by_alias == require("./features/base")
+end
+
 -- Shared tables are frozen (ADR 0046): a write fails; lookups still cache
 function Checks:frozen_checks()
 	local function blocked(f)
