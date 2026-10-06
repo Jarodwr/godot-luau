@@ -576,13 +576,10 @@ bool call_method(lua_State *L, GDExtensionObjectPtr object, const Method &method
 	return call_variant(L, object, method.bind, method, first, argc);
 }
 
-// Object.get / Object.set / Object.call through their binds
-static const Method &object_method(const char *name) {
-	static HashMap<String, Method> methods;
-	if (Method *m = methods.getptr(name)) {
-		return *m;
-	}
-	return methods.insert(name, resolve_method(StringName("Object"), StringName(name)))->value;
+// An Object method's bind (Object.get, Object.set, Object.notification): its
+// callers keep it in a static, so it's looked up once
+static Method object_method(const char *name) {
+	return resolve_method(StringName("Object"), StringName(name));
 }
 
 // classdb_construct_object2 leaves NOTIFICATION_POSTINITIALIZE to the caller,
@@ -592,7 +589,8 @@ void notify_postinitialize(GDExtensionObjectPtr object) {
 	int64_t what = 0;  // Object::NOTIFICATION_POSTINITIALIZE
 	GDExtensionBool reversed = false;
 	GDExtensionConstTypePtr argv[] = { &what, &reversed };
-	gdextension_interface::object_method_bind_ptrcall(object_method("notification").bind, object, argv, nullptr);
+	static const GDExtensionMethodBindPtr notification = object_method("notification").bind;  // looked up once
+	gdextension_interface::object_method_bind_ptrcall(notification, object, argv, nullptr);
 }
 
 void push_object_get(lua_State *L, GDExtensionObjectPtr object, const StringName &name) {
@@ -600,7 +598,8 @@ void push_object_get(lua_State *L, GDExtensionObjectPtr object, const StringName
 	const Variant *argv[] = { &key };
 	Variant result;
 	GDExtensionCallError error;
-	gdextension_interface::object_method_bind_call(object_method("get").bind, object, (const GDExtensionConstVariantPtr *)argv, 1, result._native_ptr(), &error);
+	static const GDExtensionMethodBindPtr get = object_method("get").bind;  // looked up once
+	gdextension_interface::object_method_bind_call(get, object, (const GDExtensionConstVariantPtr *)argv, 1, result._native_ptr(), &error);
 	push_variant(L, result);
 }
 
@@ -610,7 +609,8 @@ static void generic_set(lua_State *L, GDExtensionObjectPtr object, const StringN
 	const Variant *argv[] = { &key, &value };
 	Variant result;
 	GDExtensionCallError error;
-	gdextension_interface::object_method_bind_call(object_method("set").bind, object, (const GDExtensionConstVariantPtr *)argv, 2, result._native_ptr(), &error);
+	static const GDExtensionMethodBindPtr set = object_method("set").bind;  // looked up once
+	gdextension_interface::object_method_bind_call(set, object, (const GDExtensionConstVariantPtr *)argv, 2, result._native_ptr(), &error);
 }
 
 // Object.call(name, args...): script methods and anything not in the table
@@ -767,12 +767,12 @@ static GDExtensionObjectPtr checked_object(lua_State *L, int index) {
 	return box ? box->object : nullptr;
 }
 
-void push_object(lua_State *L, GDExtensionObjectPtr object, bool never_freed, bool fresh) {
+void push_object(lua_State *L, GDExtensionObjectPtr object, bool never_freed, ClassInfo *fresh) {
 	if (object == nullptr) {
 		lua_pushnil(L);
 		return;
 	}
-	if (push_self_table(L, object)) {
+	if (!fresh && push_self_table(L, object)) {
 		return;
 	}
 	// One box per live non-RefCounted object, in a weak-valued table keyed by
@@ -796,7 +796,7 @@ void push_object(lua_State *L, GDExtensionObjectPtr object, bool never_freed, bo
 	from_object(box->ref._native_ptr(), &object);
 	box->object = object;
 	box->id = gdextension_interface::object_get_instance_id(object);
-	box->cls = class_info_of(object);
+	box->cls = fresh ? fresh : class_info_of(object);
 	box->can_be_freed = !never_freed && !box->cls->is_ref_counted;
 	// RefCounted objects aren't cached: temporary ones (RefCounted.new() in a
 	// loop) filled the table with dead entries between collections and made

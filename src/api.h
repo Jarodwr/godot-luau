@@ -107,9 +107,10 @@ Variant to_variant(lua_State *L, int index);
 // which swaps byte by byte out of line (docs/adr/0002).
 void to_variant_into_nil(lua_State *L, int index, Variant *r_dest);
 // Pushes an engine object as Luau userdata (or the script's self table)
-// `never_freed`: engine singletons, which live until shutdown. `fresh`: the
-// object was just created, so it can't have a cached box yet.
-void push_object(lua_State *L, GDExtensionObjectPtr object, bool never_freed = false, bool fresh = false);
+// `never_freed`: engine singletons, which live until shutdown. `fresh`: an
+// object just constructed, of that class (ClassName.new()): it has no box or
+// script instance yet, and its class needn't be looked up.
+void push_object(lua_State *L, GDExtensionObjectPtr object, bool never_freed = false, ClassInfo *fresh = nullptr);
 // The engine object of the value at `index` (object userdata or self table),
 // or null
 GDExtensionObjectPtr to_object(lua_State *L, int index);

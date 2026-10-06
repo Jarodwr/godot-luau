@@ -66,7 +66,7 @@ editor build). All checksums match GDScript.
 | Call a GDScript object's method (`api_gdscript_call`) | 56 | 64 |
 | String in and out (`echo_string`) | 69 | 119 |
 | Six mixed arguments (`call_args6`) | 72 | 113 |
-| Node create + free (`api_node_create`) | 133 | 183 |
+| Node create + free (`api_node_create`) | 133 | 125 |
 | Two Vector2 operations (`api_vector2_math`) | 9.1 | 1.9 |
 | Exported property from Lua (`api_export_get`) | 7.0 | 2.3 |
 | Exported property read by GDScript (`prop_get_export`) | 22 | 43 |
