@@ -36,8 +36,18 @@ suite() {
 	fi
 }
 
-# The editor's scan registers global classes (class_name) for the suites
-(cd demo && limit 300 "$G" --headless --editor --quit --path . >/dev/null 2>&1)
+# The editor's import registers global classes (class_name) for the suites.
+# A fresh project loads the extension only when the scan finds it, and Godot
+# 4.7.2 crashes quitting after such a late load (any extension: seen with
+# fennel-gdextension too), so the extension is listed beforehand, as it is
+# after a project's first editor session.
+mkdir -p demo/.godot
+[ -f demo/.godot/extension_list.cfg ] || printf 'res://addons/godot_luau/godot_luau.gdextension\n' > demo/.godot/extension_list.cfg
+if ! (cd demo && limit 300 "$G" --headless --import --path . > "$logs/import.log" 2>&1); then
+	echo "FAIL import; the end of its output ($logs/import.log):"
+	tail -40 "$logs/import.log" | sed 's/^/    /'
+	failed="$failed import"
+fi
 
 suite checks "failures: 0" --script checks.gd
 suite smoke "check = 76" --script smoke.gd

@@ -54,7 +54,8 @@ jobs:
           if [ -n "${{ matrix.osx_architectures }}" ]; then args+=("-DCMAKE_OSX_ARCHITECTURES=${{ matrix.osx_architectures }}"); fi
           if [ "$RUNNER_OS" = Windows ]; then
             # A .pdb next to the .dll, so Godot's crash handler names functions
-            args+=("-DCMAKE_CXX_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG /Zi" "-DCMAKE_SHARED_LINKER_FLAGS_RELEASE=/DEBUG /OPT:REF /OPT:ICF")
+            # ("-" options: Git Bash rewrites "/O2" into a path)
+            args+=("-DCMAKE_CXX_FLAGS_RELEASE=-O2 -Ob2 -DNDEBUG -Zi" "-DCMAKE_SHARED_LINKER_FLAGS_RELEASE=-DEBUG -OPT:REF -OPT:ICF")
           fi
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "${args[@]}"
           cmake --build build
