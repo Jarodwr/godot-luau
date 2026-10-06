@@ -17,7 +17,8 @@ Download `godot-luau.zip` from the
 [build](https://github.com/Jarodwr/godot-luau/actions/workflows/build.yml)'s
 `godot-luau` artifact) and unzip it into your project: it holds
 `addons/godot_luau` with the libraries for macOS (universal), Linux (x86_64,
-arm64) and Windows (x86_64).
+arm64) and Windows (x86_64). On macOS, a download is quarantined until you
+clear it: `xattr -dr com.apple.quarantine addons/godot_luau`.
 
 ## Build
 

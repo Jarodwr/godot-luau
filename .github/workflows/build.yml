@@ -111,11 +111,13 @@ jobs:
           cp artifacts/lib-*/* "$addon/bin/"
           cp artifacts/definitions/godot.d.luau "$addon/types/"
           find dist -type f | sort
+          test -f "$addon/types/.gdignore"
           (cd dist && zip -qr ../godot-luau.zip addons)
       - uses: actions/upload-artifact@v4
         with:
           name: godot-luau
           path: dist
+          include-hidden-files: true  # types/.gdignore
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
