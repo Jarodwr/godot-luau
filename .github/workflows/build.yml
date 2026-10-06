@@ -66,6 +66,12 @@ jobs:
         run: tools/run_tests.sh
 
       - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-logs-${{ matrix.name }}
+          path: test-logs
+
+      - uses: actions/upload-artifact@v4
         with:
           name: lib-${{ matrix.name }}
           path: addons/godot_luau/bin/*godot_luau*

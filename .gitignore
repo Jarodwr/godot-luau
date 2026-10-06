@@ -4,3 +4,4 @@ addons/godot_luau/bin/
 *.log
 demo/hot_test/
 addons/godot_luau/types/godot.d.luau
+test-logs/

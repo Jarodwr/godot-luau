@@ -405,8 +405,12 @@ func frame_checks() -> void:
 	root.add_child(t)
 	t.wait_timer()
 	t.wait_gdscript(self)
+	t.thread_stats()  # a full collection while waiting: the function state must survive it
 	check(t.state().get("timer_done") == null, "timer not fired yet")
 	await create_timer(0.1).timeout
+	# After a slow frame (≥ 0.1 s, as on a busy CI machine) the timer fires in
+	# the frame it was made, before gd_wait's one frame has passed
+	await process_frame
 	check(t.state().get("timer_done") == true, "await on a SceneTreeTimer")
 	check(t.state().get("gd_result") == 7, "await on a GDScript coroutine gives its result")
 

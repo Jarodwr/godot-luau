@@ -6,6 +6,8 @@
 set -u
 G="${GODOT_BIN:-godot}"
 cd "$(dirname "$0")/.."
+logs="${TEST_LOGS:-$PWD/test-logs}"  # each suite's full output
+mkdir -p "$logs"
 failed=""
 
 limit() {  # limit SECONDS COMMAND...: stop a hung suite
@@ -24,11 +26,12 @@ suite() {
 	shift 2
 	out=$(cd demo && limit 300 "$G" --headless --path . "$@" 2>&1)
 	code=$?
+	printf '%s\n' "$out" > "$logs/$name.log"
 	if [ $code -eq 0 ] && ! printf '%s\n' "$out" | grep -q '^FAIL' && { [ -z "$expected" ] || printf '%s\n' "$out" | grep -qF -- "$expected"; }; then
 		echo "ok   $name"
 	else
-		echo "FAIL $name (exit $code)"
-		printf '%s\n' "$out" | grep -E '^FAIL|ERROR|crash' | head -20
+		echo "FAIL $name (exit $code); the end of its output ($logs/$name.log):"
+		printf '%s\n' "$out" | tail -40 | sed 's/^/    /'
 		failed="$failed $name"
 	fi
 }
@@ -43,11 +46,11 @@ suite global_class "failures: 0" --script global_class.gd
 suite hot_reload "failures: 0" --script hot_reload.gd
 
 for script in check_errors check_editor; do
-	if GODOT_BIN="$G" limit 600 "tools/$script.sh" >/tmp/godot_luau_$script.log 2>&1; then
+	if GODOT_BIN="$G" limit 600 "tools/$script.sh" >"$logs/$script.log" 2>&1; then
 		echo "ok   $script"
 	else
-		echo "FAIL $script"
-		grep '^FAIL' /tmp/godot_luau_$script.log | head -20
+		echo "FAIL $script; the end of its output ($logs/$script.log):"
+		tail -40 "$logs/$script.log" | sed 's/^/    /'
 		failed="$failed $script"
 	fi
 done
