@@ -253,3 +253,9 @@ Missing features are tracked one per file in [`todo/`](todo/README.md).
   Godot takes any type is an `int`.
 - **No RPC, completion inside Godot's editor or debugging yet.** One Luau
   state, main thread only.
+
+## License
+
+MIT ([LICENSE](LICENSE)). Bundled: Luau (`lib/luau`, MIT, Roblox and the fork's
+contributors), godot-cpp (`lib/godot-cpp`, MIT, Godot Engine contributors) and
+Fennel (`addons/godot_luau/fennel.lua`, MIT, Calvin Rose and contributors).
