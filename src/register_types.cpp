@@ -2,6 +2,7 @@
 
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/classes/resource_saver.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/godot.hpp>
 
@@ -9,6 +10,7 @@ using namespace godot;
 
 static luau::LuauLanguage *language = nullptr;
 static Ref<luau::LuauLoader> loader;
+static Ref<luau::LuauSaver> saver;
 
 static void initialize(ModuleInitializationLevel level) {
 	if (level != MODULE_INITIALIZATION_LEVEL_SCENE) {
@@ -17,11 +19,14 @@ static void initialize(ModuleInitializationLevel level) {
 	GDREGISTER_CLASS(luau::LuauScript);
 	GDREGISTER_CLASS(luau::LuauLanguage);
 	GDREGISTER_CLASS(luau::LuauLoader);
+	GDREGISTER_CLASS(luau::LuauSaver);
 	GDREGISTER_INTERNAL_CLASS(luau::LuauCompletion);
 	language = memnew(luau::LuauLanguage);
 	Engine::get_singleton()->register_script_language(language);
 	loader.instantiate();
 	ResourceLoader::get_singleton()->add_resource_format_loader(loader);
+	saver.instantiate();
+	ResourceSaver::get_singleton()->add_resource_format_saver(saver);
 }
 
 static void uninitialize(ModuleInitializationLevel level) {
@@ -30,6 +35,8 @@ static void uninitialize(ModuleInitializationLevel level) {
 	}
 	ResourceLoader::get_singleton()->remove_resource_format_loader(loader);
 	loader.unref();
+	ResourceSaver::get_singleton()->remove_resource_format_saver(saver);
+	saver.unref();
 	Engine::get_singleton()->unregister_script_language(language);
 	memdelete(language);
 	language = nullptr;

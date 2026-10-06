@@ -39,7 +39,7 @@ add_library(godot_luau SHARED ${SOURCES} "${API_DATA}")
 target_include_directories(godot_luau PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/gen")
 
 # Luau definitions of Godot's API for luau-lsp, next to the library (docs/adr/0048)
-set(DEFINITIONS "${CMAKE_CURRENT_SOURCE_DIR}/addons/godot_luau/bin/godot.d.luau")
+set(DEFINITIONS "${CMAKE_CURRENT_SOURCE_DIR}/addons/godot_luau/types/godot.d.luau")
 add_custom_command(
     OUTPUT "${DEFINITIONS}"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_definitions.py" "${API_JSON}" "${DEFINITIONS}"

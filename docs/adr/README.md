@@ -73,3 +73,4 @@ at the same optimisation level.
 | [0047](0047-editor-validation.md) | The script editor validates Luau and Fennel | Accepted |
 | [0048](0048-type-definitions-for-luau-lsp.md) | Godot API definitions for luau-lsp | Accepted |
 | [0049](0049-extends-by-class-name.md) | `extends` takes a Luau class_name | Accepted |
+| [0050](0050-saving-scripts-from-the-editor.md) | Scripts saved in Godot's editor reload in place | Accepted |

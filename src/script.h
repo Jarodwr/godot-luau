@@ -2,6 +2,7 @@
 #pragma once
 
 #include <godot_cpp/classes/resource_format_loader.hpp>
+#include <godot_cpp/classes/resource_format_saver.hpp>
 #include <godot_cpp/classes/script_extension.hpp>
 #include <godot_cpp/classes/script_language_extension.hpp>
 #include <godot_cpp/templates/hash_map.hpp>
@@ -261,6 +262,20 @@ protected:
 	static void _bind_methods() {
 		ADD_SIGNAL(::godot::MethodInfo("completed", ::godot::PropertyInfo(Variant::NIL, "result", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NIL_IS_VARIANT)));
 	}
+};
+
+// Saves scripts edited in Godot's script editor, and reloads them in place
+// so tool scripts' nodes in the open scene update (docs/adr/0050)
+class LuauSaver : public ResourceFormatSaver {
+	GDCLASS(LuauSaver, ResourceFormatSaver);
+
+public:
+	Error _save(const Ref<Resource> &p_resource, const String &p_path, uint32_t p_flags) override;
+	bool _recognize(const Ref<Resource> &p_resource) const override;
+	PackedStringArray _get_recognized_extensions(const Ref<Resource> &p_resource) const override;
+
+protected:
+	static void _bind_methods() {}
 };
 
 class LuauLoader : public ResourceFormatLoader {

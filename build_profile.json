@@ -7,6 +7,7 @@
     "ResourceLoader",
     "ResourceFormatLoader",
     "ResourceFormatSaver",
+    "ResourceSaver",
     "ScriptLanguageExtension",
     "ScriptExtension"
   ]

@@ -2037,10 +2037,13 @@ void LuauLanguage::_reload_scripts(const Array &p_scripts, bool) {
 	}
 }
 
+// The editor's call for a tool script it changed: its source may already
+// hold the new text (the script editor sets it before saving), so it reloads
+// even when the file matches
 void LuauLanguage::_reload_tool_script(const Ref<Script> &p_script, bool) {
 	Ref<LuauScript> script = p_script;
-	if (script.is_valid()) {
-		reload_from_disk(script.ptr());
+	if (script.is_valid() && !reload_from_disk(script.ptr())) {
+		script->_reload(true);
 	}
 }
 
@@ -2241,7 +2244,34 @@ Dictionary LuauLanguage::_get_global_class_name(const String &p_path) const {
 	return result;
 }
 
-// ---------------------------------------------------------------- loader
+// ---------------------------------------------------------------- saver and loader
+
+bool LuauSaver::_recognize(const Ref<Resource> &p_resource) const {
+	return Ref<LuauScript>(p_resource).is_valid();
+}
+
+PackedStringArray LuauSaver::_get_recognized_extensions(const Ref<Resource> &p_resource) const {
+	return _recognize(p_resource) ? PackedStringArray({ "luau", "fnl" }) : PackedStringArray();
+}
+
+Error LuauSaver::_save(const Ref<Resource> &p_resource, const String &p_path, uint32_t) {
+	Ref<LuauScript> script = p_resource;
+	ERR_FAIL_COND_V(script.is_null(), ERR_INVALID_PARAMETER);
+	Ref<FileAccess> file = FileAccess::open(p_path, FileAccess::WRITE);
+	ERR_FAIL_COND_V_MSG(file.is_null(), FileAccess::get_open_error(), "Can't save " + p_path);
+	file->store_string(script->_get_source_code());
+	file->close();
+	if (file->get_error() != OK && file->get_error() != ERR_FILE_EOF) {
+		return ERR_CANT_CREATE;
+	}
+	// Running instances (tool scripts in the editor, or the game) take the
+	// saved version, keeping their state; a failed load keeps the old one
+	if (script->get_path() == p_path || script->get_path().is_empty()) {
+		script->source_mtime = FileAccess::get_modified_time(p_path);
+		script->_reload(true);
+	}
+	return OK;
+}
 
 Variant LuauLoader::_load(const String &p_path, const String &p_original_path, bool, int32_t) const {
 	Ref<LuauScript> script;

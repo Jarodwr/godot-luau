@@ -170,14 +170,14 @@ Godot's script editor underlines syntax and compile errors in `.luau` and
 
 For completion, hover and type checking in an external editor, use
 [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp) with the Godot API
-definitions the build writes to `addons/godot_luau/bin/godot.d.luau`
+definitions the build writes to `addons/godot_luau/types/godot.d.luau`
 ([0048](docs/adr/0048-type-definitions-for-luau-lsp.md)). In VS Code's
 `settings.json`:
 
 ```json
 {
 	"luau-lsp.platform.type": "standard",
-	"luau-lsp.types.definitionFiles": { "@godot": "addons/godot_luau/bin/godot.d.luau" },
+	"luau-lsp.types.definitionFiles": { "@godot": "addons/godot_luau/types/godot.d.luau" },
 	"luau-lsp.fflags.override": { "LuauTarjanChildLimit": "100000" }
 }
 ```

@@ -7,7 +7,7 @@
 set -u
 cd "$(dirname "$0")/.."
 lsp="${LUAU_LSP:-luau-lsp}"
-defs=addons/godot_luau/bin/godot.d.luau
+defs=addons/godot_luau/types/godot.d.luau
 [ -f "$defs" ] || { echo "build first: $defs is missing"; exit 1; }
 cd demo
 analyze() {

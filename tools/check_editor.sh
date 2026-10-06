@@ -41,6 +41,8 @@ out=$("$G" --headless --editor --path . res://tool_test/tool.tscn --quit-after 1
 expect "$out" "LUAU TOOL READY editor=true size=5"
 expect "$out" "PROBE tool.size=5 plain.speed=7.5"
 reject "$out" "LUAU PLAIN READY"
+expect "$out" "PROBE save=0 before=1 after=2 kept=7 disk=true"  # saving reloads in place (ADR 0050)
+reject "$out" "SCRIPT ERROR"
 
 # In the game: both run
 out=$("$G" --headless --path . res://tool_test/tool.tscn --quit-after 5 2>&1)
