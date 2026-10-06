@@ -168,8 +168,9 @@ tool scripts in the editor, and inspector placeholders.
 
 ### Editors
 
-Godot's script editor underlines syntax and compile errors in `.luau` and
-`.fnl` files as you type ([0047](docs/adr/0047-editor-validation.md)).
+Godot's script editor highlights `.luau` and `.fnl` files
+([0053](docs/adr/0053-script-editor-highlighting.md)) and underlines syntax
+and compile errors as you type ([0047](docs/adr/0047-editor-validation.md)).
 
 For completion, hover and type checking in an external editor, use
 [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp) with the Godot API

@@ -76,3 +76,4 @@ at the same optimisation level.
 | [0050](0050-saving-scripts-from-the-editor.md) | Scripts saved in Godot's editor reload in place | Accepted |
 | [0051](0051-export-sections.md) | Exports in inspector categories, groups and subgroups | Accepted |
 | [0052](0052-postinitialize-after-construction.md) | Objects made with ClassName.new() get NOTIFICATION_POSTINITIALIZE | Accepted |
+| [0053](0053-script-editor-highlighting.md) | A syntax highlighter for Luau and Fennel in the script editor | Accepted |

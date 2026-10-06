@@ -1,8 +1,9 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://tool_test/tool_node.luau" id="1"]
 [ext_resource type="Script" path="res://tool_test/plain_node.luau" id="2"]
 [ext_resource type="Script" path="res://tool_test/probe.gd" id="3"]
+[ext_resource type="Script" path="res://tool_test/highlight_probe.gd" id="4"]
 
 [node name="Root" type="Node"]
 
@@ -15,3 +16,6 @@ script = ExtResource("2")
 
 [node name="Probe" type="Node" parent="."]
 script = ExtResource("3")
+
+[node name="HighlightProbe" type="Node" parent="."]
+script = ExtResource("4")

@@ -1,5 +1,7 @@
+#include "highlighter.h"
 #include "script.h"
 
+#include <godot_cpp/classes/editor_plugin_registration.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/resource_saver.hpp>
@@ -13,6 +15,13 @@ static Ref<luau::LuauLoader> loader;
 static Ref<luau::LuauSaver> saver;
 
 static void initialize(ModuleInitializationLevel level) {
+	if (level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
+		// The script editor's highlighter (docs/adr/0053)
+		GDREGISTER_CLASS(luau::LuauHighlighter);
+		GDREGISTER_CLASS(luau::LuauEditorPlugin);
+		EditorPlugins::add_by_type<luau::LuauEditorPlugin>();
+		return;
+	}
 	if (level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
@@ -30,6 +39,10 @@ static void initialize(ModuleInitializationLevel level) {
 }
 
 static void uninitialize(ModuleInitializationLevel level) {
+	if (level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
+		EditorPlugins::remove_by_type<luau::LuauEditorPlugin>();
+		return;
+	}
 	if (level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}

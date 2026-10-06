@@ -9,6 +9,13 @@
     "ResourceFormatSaver",
     "ResourceSaver",
     "ScriptLanguageExtension",
-    "ScriptExtension"
+    "ScriptExtension",
+    "EditorPlugin",
+    "EditorInterface",
+    "EditorSettings",
+    "ScriptEditor",
+    "ScriptEditorBase",
+    "EditorSyntaxHighlighter",
+    "TextEdit"
   ]
 }
