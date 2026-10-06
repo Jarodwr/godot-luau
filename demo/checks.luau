@@ -253,4 +253,43 @@ function Checks:elementwise_ops()
 	}
 end
 
+-- Shared tables are frozen (ADR 0046): a write fails; lookups still cache
+function Checks:frozen_checks()
+	local function blocked(f)
+		local ok, message = pcall(f)
+		return not ok and string.find(tostring(message), "readonly", 1, true) ~= nil
+	end
+	local writes = {
+		function() math.floor = nil end,
+		function() string.upper = nil end,
+		function() getmetatable("").__index = {} end,
+		function() Color.RED = 1 end,
+		function() getmetatable(Color).__call = nil end,
+		function() getmetatable(Color(1, 0, 0)).__index = nil end,
+		function() getmetatable(Vector2(1, 2)).__index.length = nil end,
+		function() getmetatable(Vector3(1, 2, 3)).__index = nil end,
+		function() getmetatable(Vector2i(1, 2)).__index = nil end,
+		function() getmetatable(Engine).__index = nil end, -- Objects
+		function() getmetatable(_G).__index = nil end,
+		function() Timer.foo = 1 end, -- an engine class looked up after startup
+		function() setmetatable(math, {}) end,
+	}
+	local count = 0
+	for _, write in writes do
+		if blocked(write) then
+			count += 1
+		end
+	end
+	frozen_check_global = 1
+	package.loaded.frozen_check = true
+	return {
+		blocked = count,
+		writes = #writes,
+		own_global = frozen_check_global == 1,
+		package_loaded = package.loaded.frozen_check == true,
+		cached = Color.RED == Color.RED and Node.NOTIFICATION_READY == 13 and Vector2(3, 4):length() == 5
+			and Vector2(3, 4):length() == 5 and ("ab"):to_upper() == "AB" and ("ab"):to_upper() == "AB",
+	}
+end
+
 return Checks

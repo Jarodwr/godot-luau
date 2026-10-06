@@ -73,6 +73,12 @@ func _initialize() -> void:
 	check(typeof(vk.normalized2) == TYPE_VECTOR2 and vk.normalized2.is_equal_approx(Vector2(0.6, 0.8)), "Vector2 methods return Vector2")
 	check(vk.get("v2_z") == null, "a Vector2 has no z")
 
+	# Shared tables are frozen (ADR 0046)
+	var fz = a.frozen_checks()
+	check(fz.blocked == fz.writes, "writes to libraries, type tables and shared metatables fail (%d of %d)" % [fz.blocked, fz.writes])
+	check(fz.own_global and fz.package_loaded, "scripts' own globals and package.loaded stay writable")
+	check(fz.cached, "lookups that cache into frozen tables still work, twice")
+
 	# Strict vector dimensions (ADR 0045)
 	var sv = a.strict_vector_checks()
 	check(sv.ctor2_3 != "no error" and sv.ctor3_2 != "no error", "Vector2 with three numbers and Vector3 with two are errors (%s / %s)" % [sv.ctor2_3, sv.ctor3_2])

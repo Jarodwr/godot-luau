@@ -1102,7 +1102,7 @@ static int builtin_type_index(lua_State *L) {
 	}
 	lua_pushvalue(L, 2);
 	lua_pushvalue(L, -2);
-	lua_rawset(L, 1);
+	rawset_cache(L, 1);
 	return 1;
 }
 
@@ -1278,7 +1278,7 @@ int vec_methods_index(lua_State *L) {
 	lua_pushcclosurek(L, vec_generic, key, 1, nullptr);
 	lua_pushvalue(L, 2);
 	lua_pushvalue(L, -2);
-	lua_rawset(L, 1);
+	rawset_cache(L, 1);
 	return 1;
 }
 
@@ -1358,7 +1358,7 @@ static int string_library_index(lua_State *L) {
 	lua_pushcclosurek(L, string_method_call, key, 1, nullptr);
 	lua_pushvalue(L, 2);
 	lua_pushvalue(L, -2);
-	lua_rawset(L, 1);
+	rawset_cache(L, 1);
 	return 1;
 }
 
@@ -1667,7 +1667,7 @@ static int class_table_index(lua_State *L) {
 	lua_pushnumber(L, (double)ClassDB::class_get_integer_constant(cls->name, name));
 	lua_pushvalue(L, 2);
 	lua_pushvalue(L, -2);
-	lua_rawset(L, 1);
+	rawset_cache(L, 1);
 	return 1;
 }
 
@@ -1681,6 +1681,7 @@ void push_class_table(lua_State *L, ClassInfo *cls) {
 	lua_pushcclosurek(L, class_table_index, "__index", 1, nullptr);
 	lua_setfield(L, -2, "__index");
 	lua_setmetatable(L, -2);
+	freeze_table(L, -1);  // made after freeze_shared_tables, on first use
 }
 
 // ---------------------------------------------------------------- globals: utilities and enums

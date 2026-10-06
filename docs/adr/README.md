@@ -69,3 +69,4 @@ at the same optimisation level.
 | [0043](0043-opaque-64-bit-integers.md) | Integers beyond ±2^53 are opaque 64-bit values | Accepted |
 | [0044](0044-vector2-and-vector3-as-luau-types.md) | Vector2 and Vector3 are separate Luau types, through a Luau fork | Accepted |
 | [0045](0045-strict-vector-dimensions.md) | Vector dimensions are strict at typed engine boundaries | Accepted |
+| [0046](0046-frozen-shared-tables.md) | Shared libraries, type tables and metatables are frozen | Accepted |

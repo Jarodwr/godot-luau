@@ -18,10 +18,13 @@
 #include <luacodegen.h>
 #endif
 #include <lualib.h>
+#include <Luau/Common.h>
 
 #include <cstring>
 #include <deque>
 #include <new>
+
+LUAU_FASTFLAG(LuauFrozenMetaButterfly)
 
 using namespace godot;
 
@@ -1738,7 +1741,74 @@ bool compile_fennel(lua_State *L, const String &source, const String &path, Stri
 	return ok;
 }
 
+// Freezes a table, the tables in its fields and its metatable, and theirs
+void freeze_table(lua_State *L, int index) {
+	index = lua_absindex(L, index);
+	if (lua_getreadonly(L, index)) {
+		return;
+	}
+	lua_setreadonly(L, index, true);
+	lua_pushnil(L);
+	while (lua_next(L, index)) {
+		if (lua_istable(L, -1)) {
+			freeze_table(L, -1);
+		}
+		lua_pop(L, 1);
+	}
+	if (lua_getmetatable(L, index)) {
+		freeze_table(L, -1);
+		lua_pop(L, 1);
+	}
+}
+
+// Makes everything scripts share read-only (docs/adr/0046): the libraries
+// and type tables in the globals, and the metatables of strings, vectors,
+// packed values, Objects, Variants and the globals. The globals table itself
+// stays writable (scripts' own globals, cached engine classes), and so does
+// `package`, whose `loaded` fills as modules load.
+static void freeze_shared_tables(lua_State *L) {
+	lua_pushnil(L);
+	while (lua_next(L, LUA_GLOBALSINDEX)) {
+		bool package = lua_type(L, -2) == LUA_TSTRING && strcmp(lua_tostring(L, -2), "package") == 0;
+		if (lua_istable(L, -1) && !package && !lua_rawequal(L, -1, LUA_GLOBALSINDEX)) {
+			freeze_table(L, -1);
+		}
+		lua_pop(L, 1);
+	}
+	lua_pushstring(L, "");
+	lua_pushvector2(L, 0, 0);
+	lua_pushvector(L, 0, 0, 0);
+	int values = 3;
+	if (PACKED_VALUES) {
+		lua_pushlightuserdatatagged(L, nullptr, LUTAG_VECTOR2I);
+		values++;
+	}
+	for (int i = -values; i < 0; i++) {
+		if (lua_getmetatable(L, i)) {
+			freeze_table(L, -1);
+			lua_pop(L, 1);
+		}
+	}
+	lua_pop(L, values);
+	for (int tag : { TAG_OBJECT, TAG_VARIANT }) {
+		lua_getuserdatametatable(L, tag);
+		if (lua_istable(L, -1)) {
+			freeze_table(L, -1);
+		}
+		lua_pop(L, 1);
+	}
+	if (lua_getmetatable(L, LUA_GLOBALSINDEX)) {
+		freeze_table(L, -1);
+		lua_pop(L, 1);
+	}
+}
+
 void open_state() {
+	// Frozen metatables keep their metamethods in direct slots (an upstream
+	// flag, off by default there): engine method calls and property reads,
+	// which look up __namecall/__index on the frozen Object, Variant and
+	// vector metatables, take 3-10% less time (docs/adr/0046)
+	FFlag::LuauFrozenMetaButterfly.value = true;
 	L_main = luaL_newstate();
 	install_error_handler(L_main);
 #ifdef GODOT_LUAU_CODEGEN
@@ -1757,6 +1827,7 @@ void open_state() {
 	register_globals(L_main);
 	open_coroutines(L_main);
 	load_fennel(L_main);
+	freeze_shared_tables(L_main);
 	// Globals are set up: let loaded code cache global lookups and use the
 	// builtin fast calls. Fennel only calls setfenv on its own macro
 	// environments, so this stays set (docs/adr/0008).

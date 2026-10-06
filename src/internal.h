@@ -31,6 +31,25 @@ constexpr bool PACKED_VALUES = false;
 #endif
 enum : int { LUTAG_VECTOR2I = 1, LUTAG_RID = 2, LUTAG_INT64 = 3 };
 
+// ---- Frozen shared tables (docs/adr/0046)
+//
+// Libraries, type tables and metatables are shared by every script, so they
+// are read-only to scripts (freeze_shared_tables). Their __index functions
+// still cache what they look up: lua_rawset at the absolute index `table`,
+// lifting the freeze for that one write.
+inline void rawset_cache(lua_State *L, int table) {
+	bool frozen = lua_getreadonly(L, table);
+	if (frozen) {
+		lua_setreadonly(L, table, false);
+	}
+	lua_rawset(L, table);
+	if (frozen) {
+		lua_setreadonly(L, table, true);
+	}
+}
+
+void freeze_table(lua_State *L, int index);
+
 // ---- Integers (docs/adr/0043)
 //
 // A Godot int becomes a Lua number when a double holds it exactly (within
