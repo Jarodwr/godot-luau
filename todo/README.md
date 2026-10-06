@@ -27,7 +27,6 @@ static functions and the remaining overrides ([ADR 0039](../docs/adr/0039-static
 
 ## Editor and tooling
 
-- [Editor: validation and error reporting](editor-validation.md)
 - [Editor: templates and syntax highlighting](editor-templates-and-highlighting.md)
 - [Editor: code completion](code-completion.md)
 - [Debugger and profiler integration](debugger.md)

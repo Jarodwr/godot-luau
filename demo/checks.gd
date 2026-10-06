@@ -73,6 +73,29 @@ func _initialize() -> void:
 	check(typeof(vk.normalized2) == TYPE_VECTOR2 and vk.normalized2.is_equal_approx(Vector2(0.6, 0.8)), "Vector2 methods return Vector2")
 	check(vk.get("v2_z") == null, "a Vector2 has no z")
 
+	# Editor validation (ADR 0047): errors with line and column, functions for
+	# the members panel, for Luau and Fennel
+	var lang: Object = null
+	for i in Engine.get_script_language_count():
+		if Engine.get_script_language(i).get_class() == "LuauLanguage":
+			lang = Engine.get_script_language(i)
+	var v_ok = lang.validate_script("local T = {}\nfunction T:_ready()\nend\nT.f = function() end\nreturn T\n", "res://v.luau")
+	check(v_ok.valid and v_ok.errors.is_empty() and v_ok.functions == PackedStringArray(["_ready:2", "f:4"]), "a valid script validates, with its functions (%s)" % v_ok)
+	var v_syntax = lang.validate_script("local T = {}\nfunction T:f()\n  local x = = 1\nend\nlocal y = (\nreturn T\n", "res://v.luau")
+	check(not v_syntax.valid and v_syntax.errors.size() == 2 and v_syntax.errors[0].line == 3 and v_syntax.errors[0].column == 13 and v_syntax.errors[1].line == 6, "every syntax error, with line and column (%s)" % [v_syntax.errors])
+	var many := "local T = {}\nfunction T:f()\n"
+	for i in 210:
+		many += "  local a%d = tostring(%d)\n" % [i, i]
+	many += "end\nreturn T\n"
+	var v_compile = lang.validate_script(many, "res://v.luau")
+	check(not v_compile.valid and v_compile.errors.size() == 1 and v_compile.errors[0].line > 2, "errors only the compiler finds (too many locals) (%s)" % [v_compile.errors])
+	var v_fnl = lang.validate_script("(local M {})\n(fn M._ready [self] nil)\n\n(fn M.go [self] 1)\nM\n", "res://v.fnl")
+	check(v_fnl.valid and v_fnl.functions == PackedStringArray(["_ready:2", "go:4"]), "Fennel validates, with functions at Fennel lines (%s)" % v_fnl)
+	var v_fnl_parse = lang.validate_script("(local M {})\n(fn M.f [self]\n  (print \"x\"\nM\n", "res://v.fnl")
+	check(not v_fnl_parse.valid and "Parse error" in v_fnl_parse.errors[0].message, "Fennel parse errors (%s)" % [v_fnl_parse.errors])
+	var v_fnl_compile = lang.validate_script("(local M {})\n(fn M.f [self]\n  (let [x] x))\nM\n", "res://v.fnl")
+	check(not v_fnl_compile.valid and v_fnl_compile.errors[0].line == 3 and v_fnl_compile.errors[0].column == 8, "Fennel compile errors, with line and column (%s)" % [v_fnl_compile.errors])
+
 	# Shared tables are frozen (ADR 0046)
 	var fz = a.frozen_checks()
 	check(fz.blocked == fz.writes, "writes to libraries, type tables and shared metatables fail (%d of %d)" % [fz.blocked, fz.writes])

@@ -200,6 +200,8 @@ public:
 	TypedArray<Dictionary> _get_built_in_templates(const StringName &) const override { return {}; }
 	bool _is_using_templates() override { return false; }
 	Dictionary _validate(const String &, const String &, bool, bool, bool, bool) const override;
+	// _validate's result for any source (bound, for tests and project checks)
+	Dictionary validate_script(const String &p_source, const String &p_path) const;
 	String _validate_path(const String &) const override { return {}; }
 	Object *_create_script() const override;
 	bool _has_named_classes() const override { return false; }
@@ -246,7 +248,7 @@ public:
 	Dictionary _get_global_class_name(const String &p_path) const override;
 
 protected:
-	static void _bind_methods() {}
+	static void _bind_methods();
 };
 
 // What a call from Godot that suspended in await returns: Signal(this,

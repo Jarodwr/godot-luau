@@ -12,6 +12,7 @@
 #include <godot_cpp/godot.hpp>
 #include <godot_cpp/variant/signal.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+#include <Luau/Parser.h>
 #include <luacode.h>
 #include <lualib.h>
 
@@ -2061,10 +2062,130 @@ Ref<Script> LuauLanguage::_make_template(const String &, const String &, const S
 	return script;
 }
 
-Dictionary LuauLanguage::_validate(const String &, const String &, bool, bool, bool, bool) const {
+// ---------------------------------------------------------------- validation (docs/adr/0047)
+//
+// The script editor validates as you type: syntax errors from Luau's parser
+// (every one, with its column), then compile errors, for .luau files and for
+// the Lua that Fennel makes from .fnl files (whose lines match the Fennel
+// source). Functions assigned to fields at the top level (`function T:f()`,
+// `T.f = function`, Fennel's `(fn T.f [])`) are listed for the members panel.
+
+static void add_error(Array &errors, int line, int column, const String &message) {
+	Dictionary error;
+	error["line"] = line;
+	error["column"] = column;
+	error["message"] = message.get_slicec('\n', 0).strip_edges();
+	errors.push_back(error);
+}
+
+// "path:12:3: message" or ":12: message": line, column (left as it was if
+// absent) and the message. Returns false when the text has no location.
+static bool error_location(const String &text, int &r_line, int &r_column, String &r_message) {
+	for (int i = 0; i < text.length(); i++) {
+		if (text[i] != ':' || i + 1 >= text.length() || !is_digit(text[i + 1])) {
+			continue;
+		}
+		int end = i + 1;
+		while (end < text.length() && is_digit(text[end])) {
+			end++;
+		}
+		if (end >= text.length() || text[end] != ':') {
+			continue;
+		}
+		r_line = text.substr(i + 1, end - i - 1).to_int();
+		int rest = end + 1;
+		int column_end = rest;
+		while (column_end < text.length() && is_digit(text[column_end])) {
+			column_end++;
+		}
+		if (column_end > rest && column_end < text.length() && text[column_end] == ':') {
+			r_column = text.substr(rest, column_end - rest).to_int();
+			rest = column_end + 1;
+		}
+		r_message = text.substr(rest).strip_edges();
+		return true;
+	}
+	return false;
+}
+
+static void list_functions(Luau::AstStatBlock *root, PackedStringArray &r_functions) {
+	auto add = [&](Luau::AstExpr *target, Luau::AstExprFunction *function) {
+		if (Luau::AstExprIndexName *name = target->as<Luau::AstExprIndexName>()) {
+			r_functions.push_back(String::utf8(name->index.value) + ":" + itos(function->location.begin.line + 1));
+		}
+	};
+	for (Luau::AstStat *stat : root->body) {
+		if (Luau::AstStatFunction *function = stat->as<Luau::AstStatFunction>()) {
+			add(function->name, function->func);
+		} else if (Luau::AstStatAssign *assign = stat->as<Luau::AstStatAssign>()) {
+			for (size_t i = 0; i < assign->vars.size && i < assign->values.size; i++) {
+				if (Luau::AstExprFunction *value = assign->values.data[i]->as<Luau::AstExprFunction>()) {
+					add(assign->vars.data[i], value);
+				}
+			}
+		}
+	}
+}
+
+// Validates Luau source: errors into r_errors, top-level functions into
+// r_functions
+static void validate_luau(const String &source, Array &r_errors, PackedStringArray &r_functions) {
+	CharString code = source.utf8();
+	Luau::Allocator allocator;
+	Luau::AstNameTable names(allocator);
+	Luau::ParseResult parsed = Luau::Parser::parse(code.get_data(), code.length(), names, allocator);
+	for (const Luau::ParseError &error : parsed.errors) {
+		const Luau::Location &at = error.getLocation();
+		add_error(r_errors, at.begin.line + 1, at.begin.column + 1, String::utf8(error.getMessage().c_str()));
+	}
+	if (!parsed.errors.empty()) {
+		return;
+	}
+	list_functions(parsed.root, r_functions);
+	String error = compile_error(source);
+	if (!error.is_empty()) {
+		int line = 1, column = 1;
+		String message = error;
+		error_location(error, line, column, message);
+		add_error(r_errors, line, column, message);
+	}
+}
+
+Dictionary LuauLanguage::validate_script(const String &p_source, const String &p_path) const {
+	Array errors;
+	PackedStringArray functions;
+	if (p_path.get_extension() == "fnl") {
+		String lua;
+		if (!compile_fennel(ensure_state(), p_source, p_path, lua)) {
+			int line = 1, column = 0;
+			String message = lua;
+			error_location(lua, line, column, message);
+			add_error(errors, line, column + 1, message);  // Fennel counts columns from 0
+		} else {
+			Array lua_errors;
+			validate_luau(lua, lua_errors, functions);
+			for (int i = 0; i < lua_errors.size(); i++) {
+				Dictionary error = lua_errors[i];  // Fennel made Lua that doesn't compile: say so
+				error["message"] = "in the Lua compiled from Fennel: " + String(error["message"]);
+				errors.push_back(error);
+			}
+		}
+	} else {
+		validate_luau(p_source, errors, functions);
+	}
 	Dictionary result;
-	result["valid"] = true;
+	result["valid"] = errors.is_empty();
+	result["errors"] = errors;
+	result["functions"] = functions;
 	return result;
+}
+
+Dictionary LuauLanguage::_validate(const String &p_script, const String &p_path, bool, bool, bool, bool) const {
+	return validate_script(p_script, p_path);
+}
+
+void LuauLanguage::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("validate_script", "source", "path"), &LuauLanguage::validate_script);
 }
 
 Object *LuauLanguage::_create_script() const {

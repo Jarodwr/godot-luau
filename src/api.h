@@ -19,6 +19,8 @@ using godot::Variant;
 lua_State *state();
 // Compiles and loads a chunk (pushes the function, or an error message)
 bool load_chunk(lua_State *L, const godot::String &source, const godot::String &chunkname);
+// Compiles without loading: the compiler's error (":line: message"), or ""
+godot::String compile_error(const godot::String &source);
 // Fennel source → Lua source (or the error message in r_lua)
 bool compile_fennel(lua_State *L, const godot::String &source, const godot::String &path, godot::String &r_lua);
 void open_state();

@@ -1678,6 +1678,15 @@ bool load_chunk(lua_State *L, const String &source, const String &chunkname) {
 	return status == 0;
 }
 
+String compile_error(const String &source) {
+	CharString code = source.utf8();
+	size_t bytecode_size = 0;
+	char *bytecode = luau_compile(code.get_data(), code.length(), compile_options(), &bytecode_size);
+	String error = bytecode_size > 0 && bytecode[0] == 0 ? String::utf8(bytecode + 1, (int)bytecode_size - 1) : String();
+	::free(bytecode);
+	return error;
+}
+
 // What Fennel expects of a Lua environment that Luau leaves to the host
 static const char *PRELUDE = R"(
 package = { preload = {}, loaded = {}, path = "", config = "/\n;\n?\n!\n-\n", searchers = {} }
