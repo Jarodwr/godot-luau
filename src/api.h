@@ -96,6 +96,8 @@ bool set_property(lua_State *L, GDExtensionObjectPtr object, const Member &membe
 void push_member_method(lua_State *L, const Member &member);
 // Object.get(name), for names that aren't engine members
 void push_object_get(lua_State *L, GDExtensionObjectPtr object, const StringName &name);
+// Sends NOTIFICATION_POSTINITIALIZE, which classdb_construct_object2 leaves to the caller
+void notify_postinitialize(GDExtensionObjectPtr object);
 
 // ---- Values
 void push_variant(lua_State *L, const Variant &value);

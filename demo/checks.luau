@@ -253,6 +253,19 @@ function Checks:elementwise_ops()
 	}
 end
 
+-- Objects made with ClassName.new() get NOTIFICATION_POSTINITIALIZE: a Label
+-- lays itself out with its theme (crashed before)
+function Checks:new_control_checks()
+	local label = Label.new()
+	label.text = "hello"
+	label.position = Vector2(16, 12)
+	label:set_position(Vector2(4, 5))
+	local size = label:get_minimum_size()
+	local font = label:get_theme_font("font")
+	label:free()
+	return size.x > 0 and font ~= nil
+end
+
 -- require("@res/…") is require("res://…") (ADR 0048: the form luau-lsp follows)
 function Checks:require_alias_checks()
 	local by_alias = require("@res/features/base")

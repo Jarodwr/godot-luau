@@ -585,6 +585,16 @@ static const Method &object_method(const char *name) {
 	return methods.insert(name, resolve_method(StringName("Object"), StringName(name)))->value;
 }
 
+// classdb_construct_object2 leaves NOTIFICATION_POSTINITIALIZE to the caller,
+// as godot-cpp's own construction sends it; Control sets up its theme cache
+// there (a Label used without it crashes laying itself out)
+void notify_postinitialize(GDExtensionObjectPtr object) {
+	int64_t what = 0;  // Object::NOTIFICATION_POSTINITIALIZE
+	GDExtensionBool reversed = false;
+	GDExtensionConstTypePtr argv[] = { &what, &reversed };
+	gdextension_interface::object_method_bind_ptrcall(object_method("notification").bind, object, argv, nullptr);
+}
+
 void push_object_get(lua_State *L, GDExtensionObjectPtr object, const StringName &name) {
 	Variant key = name;
 	const Variant *argv[] = { &key };

@@ -96,6 +96,7 @@ func _initialize() -> void:
 	var v_fnl_compile = lang.validate_script("(local M {})\n(fn M.f [self]\n  (let [x] x))\nM\n", "res://v.fnl")
 	check(not v_fnl_compile.valid and v_fnl_compile.errors[0].line == 3 and v_fnl_compile.errors[0].column == 8, "Fennel compile errors, with line and column (%s)" % [v_fnl_compile.errors])
 
+	check(a.new_control_checks(), "a Label from Label.new() is set up: position, layout and theme work")
 	check(a.require_alias_checks(), "require(\"@res/…\") loads the same module as res:// and ./ (ADR 0048)")
 
 	# Export sections (ADR 0051): the property list as Godot sees it

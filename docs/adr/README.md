@@ -75,3 +75,4 @@ at the same optimisation level.
 | [0049](0049-extends-by-class-name.md) | `extends` takes a Luau class_name | Accepted |
 | [0050](0050-saving-scripts-from-the-editor.md) | Scripts saved in Godot's editor reload in place | Accepted |
 | [0051](0051-export-sections.md) | Exports in inspector categories, groups and subgroups | Accepted |
+| [0052](0052-postinitialize-after-construction.md) | Objects made with ClassName.new() get NOTIFICATION_POSTINITIALIZE | Accepted |

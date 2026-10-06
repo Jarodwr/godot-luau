@@ -1649,6 +1649,7 @@ static int utility_call(lua_State *L) {
 static int class_new(lua_State *L) {
 	ClassInfo *cls = (ClassInfo *)lua_tolightuserdata(L, lua_upvalueindex(1));
 	GDExtensionObjectPtr object = gdextension_interface::classdb_construct_object2(cls->name._native_ptr());
+	notify_postinitialize(object);
 	push_object(L, object, false, true);
 	return 1;
 }

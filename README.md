@@ -55,7 +55,7 @@ editor build). All checksums match GDScript.
 | Call a GDScript object's method (`api_gdscript_call`) | 56 | 64 |
 | String in and out (`echo_string`) | 69 | 119 |
 | Six mixed arguments (`call_args6`) | 72 | 113 |
-| Node create + free (`api_node_create`) | 135 | 138 |
+| Node create + free (`api_node_create`) | 133 | 183 |
 | Two Vector2 operations (`api_vector2_math`) | 9.1 | 1.9 |
 | Exported property from Lua (`api_export_get`) | 7.0 | 2.3 |
 | Exported property read by GDScript (`prop_get_export`) | 22 | 43 |
@@ -193,7 +193,10 @@ And a `.luaurc` at the project root, so `require("@res/…")` (the same as
 ```
 
 Untyped scripts get completion and checks on the API. In `--!strict` mode,
-type `self` with one line ([example](demo/types/typed_mover.luau)):
+type `self` with one line ([example](demo/types/typed_mover.luau)), and give
+exports their sections per property (`speed = { default = 1, group =
+"Movement" }`): strict mode wants every entry of a sequence to have the same
+shape, so header entries such as `{ group = "Movement" }` don't type-check.
 
 ```lua
 type Mover = Node2D & typeof(Mover) & { velocity: Vector2 }
