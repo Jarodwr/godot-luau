@@ -1402,7 +1402,14 @@ bool LuauScript::_instance_has(Object *p_object) const {
 	return instance && (*instance)->script.ptr() == this;
 }
 
+void LuauScript::retry_pending_base() const {
+	if (!valid && pending_base != StringName() && ProjectSettings::get_singleton()->get_global_class_list().size() > 0) {
+		const_cast<LuauScript *>(this)->_reload(true);
+	}
+}
+
 bool LuauScript::_can_instantiate() const {
+	retry_pending_base();
 	// In the editor only tool scripts run; others get placeholders
 	return valid && (tool || !Engine::get_singleton()->is_editor_hint());
 }
@@ -1590,6 +1597,15 @@ Error LuauScript::_reload(bool p_keep_state) {
 		table->by_atom.clear();  // instances keep their pointers
 	}
 
+	// Read first: the editor's scan registers the class even when its base
+	// isn't known yet
+	global_name = field_string(L, table, "class_name");
+	icon_path = field_string(L, table, "icon");
+	lua_rawgetfield(L, table, "tool");
+	tool = lua_toboolean(L, -1);
+	lua_pop(L, 1);
+	pending_base = StringName();
+
 	// extends: a native class name, a script's class table, or a Luau
 	// script's class_name (docs/adr/0049), required by its path
 	lua_rawgetfield(L, table, "extends");
@@ -1605,10 +1621,20 @@ Error LuauScript::_reload(bool p_keep_state) {
 				break;
 			}
 		}
+		if (base_path.is_empty() && Engine::get_singleton()->is_editor_hint()) {
+			// Not registered yet, or not at all: the scan registers this class
+			// with that base, and using the script loads it again
+			pending_base = StringName(name);
+			UtilityFunctions::print_verbose("Luau: '" + name + "' isn't a known class yet: " + get_path());
+			reloading_paths.erase(path);
+			lua_settop(L, table - 1);
+			return ERR_PARSE_ERROR;
+		}
 		if (base_path.is_empty() || language != "Luau") {
 			UtilityFunctions::push_error(base_path.is_empty()
 							? "'extends': no native class or class_name '" + name + "': " + get_path()
 							: "'extends': " + name + " is a " + language + " class; a Luau script extends native classes and Luau scripts: " + get_path());
+			reloading_paths.erase(path);
 			lua_settop(L, table - 1);
 			return ERR_PARSE_ERROR;
 		}
@@ -1619,6 +1645,7 @@ Error LuauScript::_reload(bool p_keep_state) {
 		bool required = lua_pcall(L, 1, 1, ERROR_HANDLER) == LUA_OK;
 		loading.pop_back();
 		if (!required) {
+			reloading_paths.erase(path);
 			lua_settop(L, table - 1);  // reported by the handler
 			return ERR_PARSE_ERROR;
 		}
@@ -1627,6 +1654,7 @@ Error LuauScript::_reload(bool p_keep_state) {
 		LuauScript **base = scripts_by_class.getptr(lua_topointer(L, -1));
 		if (base == nullptr) {
 			UtilityFunctions::push_error("'extends' must be a native class name or a required script: " + get_path());
+			reloading_paths.erase(path);
 			lua_settop(L, table - 1);
 			return ERR_PARSE_ERROR;
 		}
@@ -1640,11 +1668,6 @@ Error LuauScript::_reload(bool p_keep_state) {
 	} else {
 		base_type = lua_isstring(L, -1) ? StringName(lua_tostring(L, -1)) : StringName("RefCounted");
 	}
-	lua_pop(L, 1);
-	global_name = field_string(L, table, "class_name");
-	icon_path = field_string(L, table, "icon");
-	lua_rawgetfield(L, table, "tool");
-	tool = lua_toboolean(L, -1);
 	lua_pop(L, 1);
 
 	// Inherited declarations first
@@ -1972,6 +1995,7 @@ void LuauScript::update_placeholders() {
 }
 
 void *LuauScript::_placeholder_instance_create(Object *p_for_object) const {
+	retry_pending_base();
 	LuauScript *self = const_cast<LuauScript *>(this);
 	void *placeholder = gdextension_interface::placeholder_script_instance_create(
 			LuauLanguage::get_singleton()->_owner, _owner, p_for_object->_owner);
@@ -2320,13 +2344,21 @@ Object *LuauLanguage::_create_script() const {
 Dictionary LuauLanguage::_get_global_class_name(const String &p_path) const {
 	Dictionary result;
 	Ref<LuauScript> script = ResourceLoader::get_singleton()->load(p_path);
-	if (script.is_null() || !script->valid || script->global_name.is_empty()) {
+	if (script.is_valid()) {
+		script->retry_pending_base();
+	}
+	bool pending = script.is_valid() && script->pending_base != StringName();
+	if (script.is_null() || (!script->valid && !pending) || script->global_name.is_empty()) {
 		return result;
 	}
 	result["name"] = script->global_name;
-	result["base_type"] = script->base_script.is_valid() && !script->base_script->global_name.is_empty()
-			? script->base_script->global_name
-			: script->base_type;
+	if (pending) {
+		result["base_type"] = script->pending_base;  // registered before its base (docs/adr/0049)
+	} else {
+		result["base_type"] = script->base_script.is_valid() && !script->base_script->global_name.is_empty()
+				? script->base_script->global_name
+				: script->base_type;
+	}
 	result["icon_path"] = script->icon_path;
 	result["is_abstract"] = false;
 	result["is_tool"] = script->tool;

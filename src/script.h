@@ -33,6 +33,10 @@ public:
 	String source;
 	uint64_t source_mtime = 0;     // of the file `source` was read from
 	bool valid = false;
+	// extends names a class_name the global class list doesn't have yet (the
+	// editor's first scan registers classes in no particular order): the
+	// script registers with this base and loads once it's known (docs/adr/0049)
+	StringName pending_base;
 	StringName base_type = "RefCounted";
 	Ref<LuauScript> base_script;   // `extends = require("res://…")`
 	StringName global_name;        // `class_name`
@@ -136,6 +140,8 @@ public:
 	bool _editor_can_reload_from_file() override { return true; }
 	void _placeholder_erased(void *p_placeholder) override { placeholders.erase(p_placeholder); }
 	bool _can_instantiate() const override;
+	// Loads the script again if its base was pending and is known now
+	void retry_pending_base() const;
 	Ref<Script> _get_base_script() const override { return base_script; }
 	StringName _get_global_name() const override { return global_name; }
 	bool _inherits_script(const Ref<Script> &p_script) const override;
