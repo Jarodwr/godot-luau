@@ -662,8 +662,14 @@ inline const unsigned char *data_if(const unsigned char *held, int32_t type) {
 // three-component types read and write a spare one, cleared by the caller),
 // with the operands already expanded (a scalar repeated). Constant bounds:
 // the compiler makes each a few vector instructions, not a loop or memcpy.
+#if defined(_MSC_VER)
+#define GODOT_LUAU_ALWAYS_INLINE __forceinline
+#else
+#define GODOT_LUAU_ALWAYS_INLINE __attribute__((always_inline)) inline
+#endif
+
 template <typename T, typename U>
-__attribute__((always_inline)) static inline void apply_elementwise(int op, const T *x, const T *y, T *out) {
+GODOT_LUAU_ALWAYS_INLINE static void apply_elementwise(int op, const T *x, const T *y, T *out) {
 	switch (op) {
 		case Variant::OP_ADD:
 			for (int i = 0; i < 4; i++) out[i] = (T)((U)x[i] + (U)y[i]);

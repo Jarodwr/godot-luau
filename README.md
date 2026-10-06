@@ -10,6 +10,15 @@ It started as an experiment to answer three questions:
 
 The results are in fennel-gdextension's `docs/perf/15-luau-spike.md`.
 
+## Install
+
+Download `godot-luau.zip` from the
+[releases](https://github.com/Jarodwr/godot-luau/releases) (or the latest
+[build](https://github.com/Jarodwr/godot-luau/actions/workflows/build.yml)'s
+`godot-luau` artifact) and unzip it into your project: it holds
+`addons/godot_luau` with the libraries for macOS (universal), Linux (x86_64,
+arm64) and Windows (x86_64).
+
 ## Build
 
 ```sh
@@ -19,7 +28,9 @@ mise exec -- cmake --build --preset dev
 ```
 
 The library lands in `addons/godot_luau/bin/`. `demo/` and `demo/benchmark/`
-use it through a symlink.
+use it through a symlink. `GODOT_BIN=… tools/run_tests.sh` runs every test
+suite headless. CI (`.github/workflows/build.yml`) builds and tests each
+platform on every push, and a `v*` tag publishes the zip as a release.
 
 **Build times** (Apple Silicon, 10 cores):
 

@@ -4,6 +4,7 @@ compatibility_minimum = "4.5"
 reloadable = false
 
 [libraries]
-macos.editor = "res://addons/godot_luau/bin/libgodot_luau.dylib"
-macos.debug = "res://addons/godot_luau/bin/libgodot_luau.dylib"
-macos.release = "res://addons/godot_luau/bin/libgodot_luau.dylib"
+macos = "res://addons/godot_luau/bin/libgodot_luau.dylib"
+linux.x86_64 = "res://addons/godot_luau/bin/libgodot_luau.linux.x86_64.so"
+linux.arm64 = "res://addons/godot_luau/bin/libgodot_luau.linux.arm64.so"
+windows.x86_64 = "res://addons/godot_luau/bin/godot_luau.windows.x86_64.dll"

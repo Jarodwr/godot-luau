@@ -1,0 +1,109 @@
+# Builds the addon for macOS (universal), Linux (x86_64, arm64) and Windows
+# (x86_64), runs every test suite headless with Godot on each, and packages
+# the addon. A tag v* publishes the package as a release.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: 4.7.2-stable
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-24.04
+            godot_zip: linux.x86_64
+            godot: Godot_v4.7.2-stable_linux.x86_64
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            godot_zip: linux.arm64
+            godot: Godot_v4.7.2-stable_linux.arm64
+          - name: windows-x86_64
+            os: windows-2022
+            godot_zip: win64.exe
+            godot: Godot_v4.7.2-stable_win64_console.exe
+          - name: macos-universal
+            os: macos-15
+            godot_zip: macos.universal
+            godot: Godot.app/Contents/MacOS/Godot
+            cmake_args: -DCMAKE_OSX_ARCHITECTURES=arm64;x86_64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lukka/get-cmake@latest
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+
+      - name: Build
+        run: |
+          args=()
+          if [ -n "${{ matrix.cmake_args }}" ]; then args+=("${{ matrix.cmake_args }}"); fi
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "${args[@]}"
+          cmake --build build
+          ls -la addons/godot_luau/bin
+
+      - name: Get Godot
+        run: |
+          curl -sSfL -o godot.zip "https://github.com/godotengine/godot-builds/releases/download/$GODOT_VERSION/Godot_v${GODOT_VERSION}_${{ matrix.godot_zip }}.zip"
+          unzip -q godot.zip -d godot
+          echo "GODOT_BIN=$PWD/godot/${{ matrix.godot }}" >> "$GITHUB_ENV"
+
+      - name: Test
+        run: tools/run_tests.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lib-${{ matrix.name }}
+          path: addons/godot_luau/bin/*godot_luau*
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.name == 'linux-x86_64'
+        with:
+          name: definitions
+          path: addons/godot_luau/types/godot.d.luau
+          if-no-files-found: error
+
+  package:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Assemble the addon
+        run: |
+          addon=dist/addons/godot_luau
+          mkdir -p "$addon/bin" "$addon/types"
+          cp addons/godot_luau/godot_luau.gdextension addons/godot_luau/fennel.lua LICENSE "$addon/"
+          touch "$addon/types/.gdignore"
+          cp artifacts/lib-*/* "$addon/bin/"
+          cp artifacts/definitions/godot.d.luau "$addon/types/"
+          find dist -type f | sort
+          (cd dist && zip -qr ../godot-luau.zip addons)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: godot-luau
+          path: dist
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" godot-luau.zip --title "$GITHUB_REF_NAME" --generate-notes

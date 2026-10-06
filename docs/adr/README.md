@@ -77,3 +77,4 @@ at the same optimisation level.
 | [0051](0051-export-sections.md) | Exports in inspector categories, groups and subgroups | Accepted |
 | [0052](0052-postinitialize-after-construction.md) | Objects made with ClassName.new() get NOTIFICATION_POSTINITIALIZE | Accepted |
 | [0053](0053-script-editor-highlighting.md) | A syntax highlighter for Luau and Fennel in the script editor | Accepted |
+| [0054](0054-builds-for-every-platform.md) | Builds and tests for every platform in CI | Accepted |

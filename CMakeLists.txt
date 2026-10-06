@@ -55,7 +55,21 @@ if(GODOT_LUAU_CODEGEN)
     target_link_libraries(godot_luau PRIVATE Luau.CodeGen)
     target_compile_definitions(godot_luau PRIVATE GODOT_LUAU_CODEGEN=1)
 endif()
+# One library per platform in the addon's bin/, named as godot_luau.gdextension
+# lists them ($<1:…> keeps multi-config generators from adding a subfolder)
+if(WIN32)
+    set(GODOT_LUAU_NAME "godot_luau.windows.x86_64")
+elseif(APPLE)
+    set(GODOT_LUAU_NAME "godot_luau")  # universal with -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+else()
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+        set(GODOT_LUAU_NAME "godot_luau.linux.arm64")
+    else()
+        set(GODOT_LUAU_NAME "godot_luau.linux.x86_64")
+    endif()
+endif()
 set_target_properties(godot_luau PROPERTIES
-    OUTPUT_NAME "godot_luau"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/addons/godot_luau/bin"
+    OUTPUT_NAME "${GODOT_LUAU_NAME}"
+    LIBRARY_OUTPUT_DIRECTORY "$<1:${CMAKE_CURRENT_SOURCE_DIR}/addons/godot_luau/bin>"
+    RUNTIME_OUTPUT_DIRECTORY "$<1:${CMAKE_CURRENT_SOURCE_DIR}/addons/godot_luau/bin>"
 )
