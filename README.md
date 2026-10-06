@@ -125,7 +125,7 @@ declared in the same table
 ```lua
 local Enemy = require("res://enemy.luau")
 local Boss = {
-	extends = Enemy,                 -- a required script, or a native class name
+	extends = Enemy,                 -- a required script, a native class or a Luau class_name
 	class_name = "Boss",
 	exports = { speed = 120.0, health = { type = "int", default = 500, range = { 0, 1000 } } },
 	properties = { phase = { type = "int", default = 1 } },

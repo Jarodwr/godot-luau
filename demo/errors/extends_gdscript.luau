@@ -1,0 +1,1 @@
+return { extends = "GdNamed" }

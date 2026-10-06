@@ -1574,8 +1574,39 @@ Error LuauScript::_reload(bool p_keep_state) {
 		table->by_atom.clear();  // instances keep their pointers
 	}
 
-	// extends: a native class name, or a script's class table
+	// extends: a native class name, a script's class table, or a Luau
+	// script's class_name (docs/adr/0049), required by its path
 	lua_rawgetfield(L, table, "extends");
+	if (lua_isstring(L, -1) && !ClassDB::class_exists(StringName(lua_tostring(L, -1)))) {
+		String name = String::utf8(lua_tostring(L, -1));
+		String base_path, language;
+		TypedArray<Dictionary> classes = ProjectSettings::get_singleton()->get_global_class_list();
+		for (int i = 0; i < classes.size(); i++) {
+			Dictionary entry = classes[i];
+			if (String(entry["class"]) == name) {
+				base_path = entry["path"];
+				language = entry["language"];
+				break;
+			}
+		}
+		if (base_path.is_empty() || language != "Luau") {
+			UtilityFunctions::push_error(base_path.is_empty()
+							? "'extends': no native class or class_name '" + name + "': " + get_path()
+							: "'extends': " + name + " is a " + language + " class; a Luau script extends native classes and Luau scripts: " + get_path());
+			lua_settop(L, table - 1);
+			return ERR_PARSE_ERROR;
+		}
+		lua_pop(L, 1);
+		lua_getglobal(L, "require");
+		lua_pushstring(L, base_path.utf8().get_data());
+		loading.push_back(this);  // reloading the base reloads this script
+		bool required = lua_pcall(L, 1, 1, ERROR_HANDLER) == LUA_OK;
+		loading.pop_back();
+		if (!required) {
+			lua_settop(L, table - 1);  // reported by the handler
+			return ERR_PARSE_ERROR;
+		}
+	}
 	if (lua_istable(L, -1)) {
 		LuauScript **base = scripts_by_class.getptr(lua_topointer(L, -1));
 		if (base == nullptr) {

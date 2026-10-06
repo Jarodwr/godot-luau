@@ -30,6 +30,7 @@ reject() {  # reject OUTPUT TEXT
 cache=$(cat .godot/global_script_class_cache.cfg 2>/dev/null)
 expect "$cache" '"class": &"LuauFeatures"'
 expect "$cache" '"language": &"Luau"'
+expect "$cache" '"base": &"LuauFeatures"'  # LuauByName extends it by name (ADR 0049)
 
 # GDScript uses it by name
 out=$("$G" --headless --path . --script global_class.gd 2>&1)

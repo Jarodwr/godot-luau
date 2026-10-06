@@ -26,6 +26,8 @@ expect "at: after_await (res://errors/thrower.luau:33)"
 expect "at: function at line 37 (res://errors/thrower.luau:37)"
 expect "at: load (res://errors/syntax.luau:3)"
 expect "at: function at line 3 (res://errors/thrower.fnl:5)"
+expect "'extends': no native class or class_name 'NoSuchClass': res://errors/extends_unknown.luau"
+expect "'extends': GdNamed is a GDScript class; a Luau script extends native classes and Luau scripts: res://errors/extends_gdscript.luau"
 expect "--- end"
 echo "failures: $failures"
 exit $failures
