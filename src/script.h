@@ -51,6 +51,8 @@ public:
 		Variant default_value;
 		bool has_default = false;
 		bool exported = false;              // shown in the inspector and saved
+		String category, group, subgroup;   // inspector sections (docs/adr/0051)
+		uint32_t header_usage = 0;          // a section header in `listed`, not a property
 		StringName getter, setter;          // script methods; empty: a plain field
 		// Resolved when the script loads: godot-cpp's StringName::is_empty is
 		// an engine call, too slow for every property access
@@ -76,6 +78,7 @@ public:
 		Vector<Variant::Type> arg_types;
 	};
 	Vector<PropertyDef> properties;  // inspector order
+	Vector<PropertyDef> listed;      // properties with section headers, as Godot lists them
 	HashMap<const void *, int> property_index;  // by name pointer, as methods
 	Vector<SignalDef> signals;
 	HashMap<StringName, int> signal_index;

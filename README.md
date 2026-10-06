@@ -127,7 +127,10 @@ local Enemy = require("res://enemy.luau")
 local Boss = {
 	extends = Enemy,                 -- a required script, a native class or a Luau class_name
 	class_name = "Boss",
-	exports = { speed = 120.0, health = { type = "int", default = 500, range = { 0, 1000 } } },
+	exports = {
+		speed = 120.0,
+		health = { type = "int", default = 500, range = { 0, 1000 }, group = "Combat" },  -- an inspector group
+	},
 	properties = { phase = { type = "int", default = 1 } },
 	signals = { "enraged", hit = { "damage: int" } },
 }

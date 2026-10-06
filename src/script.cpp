@@ -607,6 +607,9 @@ struct PropertyListStorage {
 static HashMap<const void *, PropertyListStorage *> property_lists;
 
 static uint32_t property_usage(const LuauScript::PropertyDef &property) {
+	if (property.header_usage) {
+		return property.header_usage;
+	}
 	return property.exported ? (PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SCRIPT_VARIABLE) : PROPERTY_USAGE_SCRIPT_VARIABLE;
 }
 
@@ -616,7 +619,7 @@ static uint32_t property_usage(const LuauScript::PropertyDef &property) {
 static Vector<Dictionary> script_property_list(Instance *instance) {
 	const LuauScript *script = instance->script.ptr();
 	Vector<Dictionary> list;
-	for (const LuauScript::PropertyDef &p : script->properties) {
+	for (const LuauScript::PropertyDef &p : script->listed) {
 		Dictionary d;
 		d["name"] = p.name;
 		d["type"] = p.type;
@@ -651,7 +654,7 @@ static Vector<Dictionary> script_property_list(Instance *instance) {
 }
 
 static const GDExtensionPropertyInfo *get_property_list_func(Instance *instance, uint32_t *r_count) {
-	const Vector<LuauScript::PropertyDef> &properties = instance->script->properties;
+	const Vector<LuauScript::PropertyDef> &properties = instance->script->listed;
 	if (instance->script->property_list_method || instance->script->validate_property_method) {
 		Vector<Dictionary> list = script_property_list(instance);
 		*r_count = (uint32_t)list.size();
@@ -1190,6 +1193,9 @@ LuauScript::PropertyDef parse_property(lua_State *L, const StringName &name, int
 			p.has_default = true;
 		}
 		lua_pop(L, 1);
+		p.category = field_string(L, index, "category");
+		p.group = field_string(L, index, "group");
+		p.subgroup = field_string(L, index, "subgroup");
 		p.getter = field_string(L, index, "get");
 		p.setter = field_string(L, index, "set");
 		p.accessors = !p.getter.is_empty() || !p.setter.is_empty();
@@ -1254,9 +1260,10 @@ LuauScript::PropertyDef parse_property(lua_State *L, const StringName &name, int
 
 // Iterates a declaration table: a sequence of { name = …, … } entries or bare
 // names (kept in order), or a map name -> declaration (sorted by name).
-// Calls f(name, index of the declaration).
-template <typename F>
-void each_declaration(lua_State *L, int index, F &&f) {
+// Calls f(name, index of the declaration), and header(index) for a sequence
+// entry without a name.
+template <typename F, typename H>
+void each_declaration(lua_State *L, int index, F &&f, H &&header) {
 	index = lua_absindex(L, index);
 	int n = lua_objlen(L, index);
 	if (n > 0) {
@@ -1269,6 +1276,9 @@ void each_declaration(lua_State *L, int index, F &&f) {
 					StringName name(lua_tostring(L, -1));
 					lua_pop(L, 1);
 					f(name, entry);
+				} else {
+					lua_pop(L, 1);
+					header(entry);
 				}
 			} else if (lua_isstring(L, entry)) {
 				// A bare name (signals = {"died"})
@@ -1296,6 +1306,11 @@ void each_declaration(lua_State *L, int index, F &&f) {
 		f(StringName(name), entry);
 		lua_settop(L, entry - 1);
 	}
+}
+
+template <typename F>
+void each_declaration(lua_State *L, int index, F &&f) {
+	each_declaration(L, index, f, [](int) {});
 }
 
 bool is_constant_name(const char *name) {
@@ -1562,6 +1577,7 @@ Error LuauScript::_reload(bool p_keep_state) {
 	valid = false;
 	clear_methods(this, L);
 	properties.clear();
+	listed.clear();
 	property_index.clear();
 	signals.clear();
 	signal_index.clear();
@@ -1751,20 +1767,62 @@ Error LuauScript::_reload(bool p_keep_state) {
 	}
 	lua_pop(L, 1);
 
-	// exports (inspector, saved) and properties (script variables)
+	// exports (inspector, saved) and properties (script variables). Exports
+	// can be in inspector sections (docs/adr/0051): a property's own
+	// category/group/subgroup, or, in a sequence, header entries such as
+	// { group = "Movement" } for the entries after them.
 	for (int pass = 0; pass < 2; pass++) {
 		lua_rawgetfield(L, table, pass == 0 ? "exports" : "properties");
 		if (lua_istable(L, -1)) {
+			bool sequence = lua_objlen(L, -1) > 0;
+			Vector<PropertyDef> declared;
+			String category, group, subgroup;
 			each_declaration(L, -1, [&](const StringName &name, int entry) {
 				PropertyDef property = parse_property(L, name, entry, pass == 0);
+				if (property.category.is_empty() && property.group.is_empty() && property.subgroup.is_empty()) {
+					property.category = category;
+					property.group = group;
+					property.subgroup = subgroup;
+				}
+				declared.push_back(property);
+			}, [&](int entry) {
+				String c = field_string(L, entry, "category"), g = field_string(L, entry, "group"), s = field_string(L, entry, "subgroup");
+				lua_rawgetfield(L, entry, "category");
+				bool has_category = !lua_isnil(L, -1);
+				lua_rawgetfield(L, entry, "group");
+				bool has_group = !lua_isnil(L, -1);
+				lua_rawgetfield(L, entry, "subgroup");
+				bool has_subgroup = !lua_isnil(L, -1);
+				lua_pop(L, 3);
+				if (has_category) {
+					category = c;
+					group = subgroup = String();
+				}
+				if (has_group) {
+					group = g;
+					subgroup = String();
+				}
+				if (has_subgroup) {
+					subgroup = s;
+				}
+			});
+			if (!sequence) {
+				// A map's names are sorted; keep each section together (unsectioned first)
+				std::stable_sort(declared.ptrw(), declared.ptrw() + declared.size(), [](const PropertyDef &a, const PropertyDef &b) {
+					if (a.category != b.category) return a.category < b.category;
+					if (a.group != b.group) return a.group < b.group;
+					return a.subgroup < b.subgroup;
+				});
+			}
+			for (const PropertyDef &property : declared) {
 				for (int i = 0; i < properties.size(); i++) {
-					if (properties[i].name == name) {
+					if (properties[i].name == property.name) {
 						properties.remove_at(i);  // redeclared: the latest wins
 						break;
 					}
 				}
 				properties.push_back(property);
-			});
+			}
 		}
 		lua_pop(L, 1);
 	}
@@ -1803,6 +1861,37 @@ Error LuauScript::_reload(bool p_keep_state) {
 
 	for (int i = 0; i < properties.size(); i++) {
 		property_index[name_ptr(properties[i].name)] = i;
+	}
+	// Section headers where an export's category, group or subgroup changes
+	// (an empty group after a group ends it, as @export_group(""))
+	listed.clear();
+	String category, group, subgroup;
+	auto header = [&](const String &name, uint32_t usage) {
+		PropertyDef h;
+		h.name = StringName(name);
+		h.header_usage = usage;
+		listed.push_back(h);
+	};
+	for (const PropertyDef &p : properties) {
+		if (p.exported) {
+			if (p.category != category) {
+				category = p.category;
+				group = subgroup = String();
+				if (!category.is_empty()) {
+					header(category, PROPERTY_USAGE_CATEGORY);
+				}
+			}
+			if (p.group != group) {
+				group = p.group;
+				subgroup = String();
+				header(group, PROPERTY_USAGE_GROUP);
+			}
+			if (p.subgroup != subgroup) {
+				subgroup = p.subgroup;
+				header(subgroup, PROPERTY_USAGE_SUBGROUP);
+			}
+		}
+		listed.push_back(p);
 	}
 	for (int i = 0; i < signals.size(); i++) {
 		signal_index[signals[i].name] = i;
@@ -1853,7 +1942,7 @@ Error LuauScript::_reload(bool p_keep_state) {
 
 TypedArray<Dictionary> LuauScript::property_list() const {
 	TypedArray<Dictionary> list;
-	for (const PropertyDef &p : properties) {
+	for (const PropertyDef &p : listed) {
 		Dictionary d;
 		d["name"] = p.name;
 		d["type"] = p.type;

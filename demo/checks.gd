@@ -98,6 +98,26 @@ func _initialize() -> void:
 
 	check(a.require_alias_checks(), "require(\"@res/…\") loads the same module as res:// and ./ (ADR 0048)")
 
+	# Export sections (ADR 0051): the property list as Godot sees it
+	for spec in [
+		["res://features/sections_list.luau", "title | Stats:category | health | Movement:group | speed | Jumping:subgroup | jump | :group | after"],
+		["res://features/sections_map.luau", "alpha | zeta | Look:group | color | Movement:group | accel | speed"],
+	]:
+		var sectioned := Node.new()
+		sectioned.set_script(load(spec[0]))
+		var shown: PackedStringArray = []
+		for prop in sectioned.get_property_list():
+			if prop.usage & PROPERTY_USAGE_CATEGORY and prop.name == "Node":
+				shown.clear()  # the script's entries come after the native class's
+			elif prop.usage & PROPERTY_USAGE_SCRIPT_VARIABLE:
+				shown.append(prop.name)
+			elif prop.usage & (PROPERTY_USAGE_CATEGORY | PROPERTY_USAGE_GROUP | PROPERTY_USAGE_SUBGROUP) and shown.size() > 0 or prop.name in ["Stats"]:
+				var kind := "category" if prop.usage & PROPERTY_USAGE_CATEGORY else ("subgroup" if prop.usage & PROPERTY_USAGE_SUBGROUP else "group")
+				shown.append("%s:%s" % [prop.name, kind])
+		var got := " | ".join(shown)
+		check(got.ends_with(spec[1]), "export sections in %s (%s)" % [spec[0].get_file(), got])
+		sectioned.free()
+
 	# Shared tables are frozen (ADR 0046)
 	var fz = a.frozen_checks()
 	check(fz.blocked == fz.writes, "writes to libraries, type tables and shared metatables fail (%d of %d)" % [fz.blocked, fz.writes])
