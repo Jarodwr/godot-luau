@@ -11,6 +11,13 @@ endif()
 # Dependencies: built once, never touched by edits to src/
 set(GODOTCPP_TARGET editor CACHE STRING "")
 set(GODOTCPP_BUILD_PROFILE "${CMAKE_CURRENT_SOURCE_DIR}/build_profile.json" CACHE PATH "")
+# On MSVC, godot-cpp disables exceptions with a public _HAS_EXCEPTIONS=0, which
+# changes std::exception's layout in our sources but not in Luau's libraries:
+# Luau's ParseError (a std::exception) then reads wrongly and crashes. Keep
+# them alike (docs/adr/0054). Elsewhere it's a private -fno-exceptions.
+if(MSVC)
+    set(GODOTCPP_DISABLE_EXCEPTIONS OFF CACHE BOOL "")
+endif()
 add_subdirectory(lib/godot-cpp EXCLUDE_FROM_ALL)
 
 set(LUAU_BUILD_CLI OFF CACHE BOOL "")

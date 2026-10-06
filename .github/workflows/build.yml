@@ -38,7 +38,7 @@ jobs:
             os: macos-15
             godot_zip: macos.universal
             godot: Godot.app/Contents/MacOS/Godot
-            cmake_args: -DCMAKE_OSX_ARCHITECTURES=arm64;x86_64
+            osx_architectures: arm64;x86_64
     defaults:
       run:
         shell: bash
@@ -51,7 +51,11 @@ jobs:
       - name: Build
         run: |
           args=()
-          if [ -n "${{ matrix.cmake_args }}" ]; then args+=("${{ matrix.cmake_args }}"); fi
+          if [ -n "${{ matrix.osx_architectures }}" ]; then args+=("-DCMAKE_OSX_ARCHITECTURES=${{ matrix.osx_architectures }}"); fi
+          if [ "$RUNNER_OS" = Windows ]; then
+            # A .pdb next to the .dll, so Godot's crash handler names functions
+            args+=("-DCMAKE_CXX_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG /Zi" "-DCMAKE_SHARED_LINKER_FLAGS_RELEASE=/DEBUG /OPT:REF /OPT:ICF")
+          fi
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "${args[@]}"
           cmake --build build
           ls -la addons/godot_luau/bin
@@ -74,7 +78,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: lib-${{ matrix.name }}
-          path: addons/godot_luau/bin/*godot_luau*
+          path: |
+            addons/godot_luau/bin/*.dll
+            addons/godot_luau/bin/*.so
+            addons/godot_luau/bin/*.dylib
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
