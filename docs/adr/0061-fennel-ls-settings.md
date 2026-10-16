@@ -31,8 +31,10 @@ paths to any depth, `:implicit-params` and `:skip`, `.fnlm` modules in
 - **The addon ships its settings as `addons/godot_luau/lsp.fnlm`.** A
   project's `.lsp.fnl` is one line, `(require :addons.godot_luau.lsp)`, so
   the settings update with the addon. `.fnlm`, like `macros.fnlm`, keeps
-  Godot from loading the file as a script; Godot ignores `.lsp.fnl` (a
-  dotfile).
+  Godot from loading the file as a script. godot-luau's loader doesn't take
+  `.lsp.fnl` either, or any dotfile: Godot skips dotfiles on macOS and Linux,
+  but on Windows, where hidden is a file attribute, the editor would load and
+  run it as a script.
 - **The settings:**
   - platform `luau`; `gd`, `await` and `spawn` are globals;
   - `defnode` and `deftool` are global macros, with one hook.

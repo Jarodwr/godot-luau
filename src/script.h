@@ -336,9 +336,16 @@ class LuauLoader : public ResourceFormatLoader {
 public:
 	PackedStringArray _get_recognized_extensions() const override { return PackedStringArray({ "luau", "fnl" }); }
 	bool _handles_type(const StringName &p_type) const override { return p_type == StringName("Script") || p_type == StringName("LuauScript"); }
+	// A dotfile isn't a script: .lsp.fnl holds fennel-ls settings (ADR 0061).
+	// Godot skips dotfiles on macOS and Linux, but on Windows, where hidden
+	// is a file attribute, the editor would load and run it.
+	bool _recognize_path(const String &p_path, const StringName &p_type) const override {
+		return !p_path.get_file().begins_with(".");
+	}
 	String _get_resource_type(const String &p_path) const override {
 		String extension = p_path.get_extension();
-		return extension == "luau" || extension == "fnl" ? "LuauScript" : "";
+		bool script = (extension == "luau" || extension == "fnl") && !p_path.get_file().begins_with(".");
+		return script ? "LuauScript" : "";
 	}
 	Variant _load(const String &p_path, const String &p_original_path, bool p_use_sub_threads, int32_t p_cache_mode) const override;
 

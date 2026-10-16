@@ -23,6 +23,7 @@ func _initialize() -> void:
 	check(a.use_kept() == null, "freed plain node raises an error (call returns null)")
 	check(a.kept_valid() == false, "is_instance_valid on a freed node is false, not an error")
 	check(a.valid_misc() == true, "is_instance_valid: nil, a number, a RefCounted, a singleton")
+	check(not ResourceLoader.exists("res://.lsp.fnl"), "a dotfile isn't a script (.lsp.fnl, which Windows doesn't hide)")
 
 	# RefCounted held only by Lua stays alive and usable (no check needed)
 	check(a.make_ref() >= 1, "RefCounted created from Lua")
