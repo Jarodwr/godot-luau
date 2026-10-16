@@ -23,6 +23,9 @@ bool load_chunk(lua_State *L, const godot::String &source, const godot::String &
 godot::String compile_error(const godot::String &source);
 // Fennel source → Lua source (or the error message in r_lua)
 bool compile_fennel(lua_State *L, const godot::String &source, const godot::String &path, godot::String &r_lua);
+// A Fennel script imported macros from a file: it compiles again when the
+// file changes (script.cpp)
+void note_macro_use(const godot::String &macro_path, const godot::String &script_path);
 void open_state();
 void close_state();
 
@@ -114,6 +117,9 @@ void push_object(lua_State *L, GDExtensionObjectPtr object, bool never_freed = f
 // The engine object of the value at `index` (object userdata or self table),
 // or null
 GDExtensionObjectPtr to_object(lua_State *L, int index);
+
+// gd.is_instance_valid: false for a freed object, without raising
+int is_instance_valid(lua_State *L);
 
 // Userdata tags
 enum : int { TAG_OBJECT = 1, TAG_VARIANT = 2 };

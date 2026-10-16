@@ -27,7 +27,10 @@ All other objects keep the check.
 
 - No lock for singleton calls or for reference-counted objects held by Lua.
 - Nodes and other manually freed objects still raise "attempt to use a freed
-  object" instead of crashing. `demo/checks.gd` covers this, along with
+  object" instead of crashing. The exception is `gd.is_instance_valid`, which
+  checks the box itself and returns false for a freed object, as GDScript's
+  does, rather than raising when its argument is converted. A freed scripted
+  node's self table is false too. `demo/checks.gd` covers this, along with
   freed scripted nodes and RefCounted lifetimes.
 
 ## Result

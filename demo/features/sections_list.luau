@@ -1,6 +1,6 @@
 -- Export sections in a sequence (ADR 0051): headers apply to what follows
 return {
-	extends = "Node",
+	extends = gd.Node,
 	exports = {
 		{ name = "title", default = "x" },
 		{ category = "Stats" },

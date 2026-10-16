@@ -1,9 +1,9 @@
--- Extends a Luau class by its class_name (ADR 0049). Calling the base's
--- version of a method takes its table, through require.
+-- Extends a Luau class with a class_name through its required table (ADR
+-- 0056), which also calls the base's version of a method.
 local Features = require("@res/features/derived")
 
 local ByName = {
-	extends = "LuauFeatures",
+	extends = Features,
 	class_name = "LuauByName",
 }
 

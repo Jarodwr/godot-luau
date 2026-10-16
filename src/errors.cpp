@@ -83,6 +83,15 @@ void report_message(const String &message) {
 	String file, rest;
 	int line = 0;
 	if (split_location(message, file, line, rest)) {
+		// A macro's error, re-raised at the macro call, carries the location
+		// of the form inside it (defnode's, docs/adr/0057)
+		String inner_file, inner_rest;
+		int inner_line = 0;
+		if (rest.begins_with("Compile error: ") && split_location(rest.substr(15), inner_file, inner_line, inner_rest)) {
+			file = inner_file;
+			line = inner_line;
+			rest = inner_rest;
+		}
 		print(rest, "load", file, line);
 	} else {
 		UtilityFunctions::push_error(message);

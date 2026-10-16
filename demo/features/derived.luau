@@ -5,26 +5,26 @@ local Features = {
 	extends = Base,
 	class_name = "LuauFeatures",
 	exports = {
-		speed = 2.5,                                   -- type from the default
-		label = "String",                              -- type name only
-		target = { type = "Node" },                    -- object type, node hint
+		speed = { default = 2.5 },                     -- type from the default
+		label = { type = gd.String },                  -- a type only
+		target = { type = gd.Node },                    -- object type, node hint
 	},
 	properties = {
-		armor = { type = "int", default = 1, set = "set_armor", get = "get_armor" },
-		readonly = { type = "int", get = "get_readonly" },
-		awaiting = { type = "int", get = "get_awaiting" },
-		ratio = { type = "float", default = 0 },       -- int default coerced
+		armor = { type = gd.int, default = 1, set = "set_armor", get = "get_armor" },
+		readonly = { type = gd.int, get = "get_readonly" },
+		awaiting = { type = gd.int, get = "get_awaiting" },
+		ratio = { type = gd.float, default = 0 },       -- int default coerced
 	},
 	signals = {
-		scored = { "points: int", "by" },
+		scored = { "points", gd.int, "by" },
 		go = {},
 	},
 	defaults = {
 		greet = { "world", "!" },
 	},
 	types = {
-		typed_add = { args = { "int", "float" }, ret = "float" },
-		scale = { args = { "float" }, ret = "float" },
+		typed_add = { args = { gd.int, gd.float }, ret = gd.float },
+		scale = { args = { gd.float }, ret = gd.float },
 	},
 	static = { "make", "scale" },
 }

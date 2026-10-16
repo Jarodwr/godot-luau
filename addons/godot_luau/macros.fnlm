@@ -1,0 +1,300 @@
+;; godot-luau's macros for Fennel scripts (docs/adr/0057), built into every
+;; .fnl file's compiler (src/api.cpp, load_fennel_macros). A macro module,
+;; so .fnlm: Godot doesn't load it as a script. They build the class table a
+;; Luau script writes (docs/adr/0032), so they're syntax only:
+;;
+;;   (defnode Boss Enemy
+;;     (prop speed 120.0 {})                     ; exported: a map follows
+;;     (group Combat                             ; an inspector section: exported
+;;       (prop health 500 {:range [0 1000]})
+;;       (prop armor 2))
+;;     (prop phase 1)                            ; a plain property
+;;     (signal hit [damage gd.int] by)          ; arguments: name or [name type]
+;;     (alias label "HUD/Label")                 ; the node, looked up on first use
+;;     (method take [damage] (super take damage)))
+
+(local header-keys {:icon true :global true})
+(local method-meta-keys {:defaults true :args true :ret true})
+(local section-keys [:category :group :subgroup])
+
+(fn nil-sym? [x]
+  (and (sym? x) (= (tostring x) :nil)))
+
+(fn plain-sym? [x]
+  (and (sym? x) (not (multi-sym? x))))
+
+(fn copy [t]
+  (collect [k v (pairs t)] k v))
+
+;; Declared types are gd values (docs/adr/0059): a string is caught here, at
+;; its form
+(fn check-type [t form]
+  (assert-compile (not= :string (type t)) (.. "a type is a gd value: gd." (tostring t) ", not :" (tostring t)) form))
+
+(fn gd-base? [base]
+  (let [parts (multi-sym? base)]
+    (and parts (= (. parts 1) :gd))))
+
+;; (super m args…) -> ((. base :m) self args…), in place so lines stay
+(fn rewrite-super [form base]
+  (when (or (list? form) (sequence? form) (table? form))
+    (if (and (list? form) (sym? (. form 1)) (= (tostring (. form 1)) :super))
+        (let [method (. form 2)]
+          (assert-compile (not (gd-base? base))
+                          "super calls a script base; call engine methods with self:method"
+                          form)
+          (assert-compile (plain-sym? method) "super needs a method name: (super name args…)" form)
+          (let [args (fcollect [i 3 (length form)] (. form i))]
+            (for [i (length form) 1 -1] (table.remove form i))
+            (table.insert form (list (sym ".") base (tostring method)))
+            (table.insert form (sym :self))
+            (each [_ arg (ipairs args)]
+              (rewrite-super arg base)
+              (table.insert form arg))))
+        (each [_ child (pairs form)]
+          (rewrite-super child base)))))
+
+;; Exports keep their order, but each inspector section is one block, placed
+;; where its first entry is (by category, then group, then subgroup)
+(fn group-sections [exports]
+  (let [first {}
+        key (fn [entry depth]
+              (table.concat (fcollect [i 1 depth]
+                              (tostring (or (. entry (. section-keys i)) "")))
+                            "\0"))
+        rank (fn [entry depth]
+               (let [k (.. depth "\1" (key entry depth))]
+                 (when (= nil (. first k))
+                   (tset first k (+ 1 (length (icollect [_ (pairs first)] true)))))
+                 (. first k)))]
+    (each [i entry (ipairs exports)]
+      (tset entry :__order [(rank entry 1) (rank entry 2) (rank entry 3) i]))
+    (table.sort exports (fn [a b]
+                          (let [x a.__order y b.__order]
+                            (var less nil)
+                            (for [i 1 4 &until (not= less nil)]
+                              (when (not= (. x i) (. y i))
+                                (set less (< (. x i) (. y i)))))
+                            less)))
+    (each [_ entry (ipairs exports)]
+      (tset entry :__order nil))
+    exports))
+
+;; Whether `form` reads self (self, self.x or self:m)
+(fn uses-self? [form]
+  (if (sym? form) (= :self (. (or (multi-sym? form) [(tostring form)]) 1))
+      (or (list? form) (table? form))
+      (accumulate [found false _ child (pairs form) &until found]
+        (uses-self? child))
+      false))
+
+;; A default is evaluated for each instance, as a GDScript initializer is
+;; (docs/adr/0060): a literal number, string or boolean is the value itself,
+;; anything else a function each instance calls. {} is a map, so a
+;; Dictionary; a Lua {} would be an empty Array.
+(fn default-value [default]
+  (let [t (type default)]
+    (if (or (= t :number) (= t :string) (= t :boolean)) default
+        (and (table? default) (not (sequence? default)) (= nil (next default)))
+        (list (sym :fn) [] (list (sym :gd.Dictionary)))
+        (list (sym :fn) [] default))))
+
+(fn prop [class form seen section]
+  (let [[_ name default meta] form]
+    (assert-compile (plain-sym? name) "prop needs a name: (prop name default {…})" form)
+    (assert-compile (<= (length form) 4) "prop takes a name, a default and a map" form)
+    (assert-compile (or (= nil meta) (and (table? meta) (not (sequence? meta))))
+                    "prop's metadata is a map: (prop name default {…})" form)
+    (let [name (tostring name)
+          entry (if meta (copy meta) {})
+          in-section (not= nil (next section))
+          exported (or in-section (and meta (not= false (. meta :export))))]
+      (assert-compile (not (. seen name)) (.. "'" name "' is declared twice") form)
+      (tset seen name true)
+      (each [_ k (ipairs section-keys)]
+        (assert-compile (= nil (. entry k))
+                        (.. "put '" name "' in a (" k " Name …) form rather than :" k " in its map") form))
+      (assert-compile (not (and in-section (= false (. entry :export))))
+                      (.. "'" name "' is in an inspector section, so it's exported; move it out to hide it") form)
+      (when (not= nil (. entry :type)) (check-type (. entry :type) form))
+      (each [k v (pairs section)] (tset entry k v))
+      (tset entry :export nil)
+      (when (not (nil-sym? default))
+        (assert-compile (not (uses-self? default))
+                        (.. "the default of '" name "' can't read self; set it in _ready") form)
+        (tset entry :default (default-value default)))
+      (if exported
+          (do
+            (assert-compile (or (not= nil (. entry :default)) (. entry :type))
+                            (.. "'" name "' is exported without a default: give it a :type") form)
+            (tset entry :name name)
+            (table.insert class.exports entry))
+          (tset class.properties name entry)))))
+
+;; (category Name …), (group Name …), (subgroup Name …): inspector sections
+;; (docs/adr/0051). Every prop inside one is exported.
+(local section-levels {:category true :group true :subgroup true})
+
+(fn section [class form seen outer]
+  (let [kind (tostring (. form 1))
+        name (. form 2)
+        inner (copy outer)]
+    (assert-compile (or (= :string (type name)) (plain-sym? name))
+                    (.. kind " needs a name: (" kind " Name (prop …) …)") form)
+    (case kind
+      :category (assert-compile (= nil (next outer)) "a category can't be inside another section" form)
+      :group (assert-compile (= nil outer.group) "a group can't be inside a group; use subgroup" form)
+      :subgroup (assert-compile (and outer.group (= nil outer.subgroup)) "a subgroup goes directly inside a group" form))
+    (tset inner kind (tostring name))
+    (for [i 3 (length form)]
+      (let [f (. form i)
+            head (and (list? f) (sym? (. f 1)) (tostring (. f 1)))]
+        (if (= head :prop) (prop class f seen inner)
+            (. section-levels head) (section class f seen inner)
+            (assert-compile false
+                            (.. "a " kind " holds prop forms and nested sections, not "
+                                (if head (.. "(" head " …)") (tostring f)))
+                            f))))))
+
+;; (signal hit [damage gd.int] by [target Enemy]): each argument is a name,
+;; or [name type] when it's typed. The type is any expression: gd.int, a
+;; required script's local (docs/adr/0059).
+(fn signal [class form seen]
+  (let [name (. form 2)
+        usage "a signal argument is a name or [name type]: (signal hit [damage gd.int] by)"]
+    (assert-compile (plain-sym? name) "signal needs a name: (signal name arg…)" form)
+    (let [name (tostring name)
+          out (sequence)
+          args {}]
+      (assert-compile (not (. seen name)) (.. "'" name "' is declared twice") form)
+      (tset seen name true)
+      (for [i 3 (length form)]
+        (let [arg (. form i)
+              typed (and (sequence? arg) (= 2 (length arg)))
+              arg-name (if typed (. arg 1) arg)]
+          (assert-compile (plain-sym? arg-name) usage (if (table? arg) arg form))
+          (assert-compile (not (. args (tostring arg-name)))
+                          (.. "signal " name " has two arguments named " (tostring arg-name)) form)
+          (tset args (tostring arg-name) true)
+          (table.insert out (tostring arg-name))
+          (when typed
+            (let [t (. arg 2)]
+              (assert-compile (not= :string (type t))
+                              (.. "a signal argument's type is a gd value: gd." (tostring t) ", not :" (tostring t))
+                              arg)
+              (table.insert out t)))))
+      (tset class.signals name out))))
+
+;; (alias name "Path"): a child node by name, looked up on first use. A
+;; property whose getter calls get_node and keeps the node in self as a
+;; plain field, so later reads don't call it.
+(fn alias [class form seen class-sym]
+  (let [[_ name path] form]
+    (assert-compile (plain-sym? name) "alias needs a name: (alias name \"Path/To/Node\")" form)
+    (assert-compile (and (= 3 (length form)) (= :string (type path)))
+                    "alias takes a name and a node path: (alias name \"Path/To/Node\")" form)
+    (let [name (tostring name)
+          getter (.. "_alias_" name)]
+      (assert-compile (not (. seen name)) (.. "'" name "' is declared twice") form)
+      (tset seen name true)
+      (tset class.properties name {:type (sym :gd.Node) :get getter})
+      (let [node (gensym :node)]
+        (list (sym :fn) (sym (.. (tostring class-sym) "." getter)) (sequence (sym :self))
+              (list (sym :or) (list (sym :rawget) (sym :self) name)
+                    (list (sym :let) [node (list (sym "self:get_node") path)]
+                          (list (sym :rawset) (sym :self) name node)
+                          node)))))))
+
+(fn method [class form seen class-sym base]
+  (let [[_ name params] form]
+    (assert-compile (plain-sym? name) "method needs a name: (method name [args] …)" form)
+    (assert-compile (sequence? params) "method needs its parameters: (method name [args] …)" form)
+    (each [_ p (ipairs params)]
+      (assert-compile (not (and (sym? p) (= (tostring p) :self)))
+                      "self is implicit in a method; drop it from the parameters" form))
+    (let [mname (tostring name)
+          meta (. form 4)]
+      (assert-compile (not (. seen mname)) (.. "'" mname "' is declared twice") form)
+      (tset seen mname true)
+      ;; A map before more forms is metadata, as for fn
+      (when (and (table? meta) (not (sequence? meta)) (not (list? meta)) (not (sym? meta))
+                 (> (length form) 4))
+        (each [k v (pairs meta)]
+          (assert-compile (. method-meta-keys k)
+                          (.. "unknown method metadata :" (tostring k) " (use :defaults, :args or :ret)") form)
+          (case k
+            :args (each [_ t (ipairs v)] (check-type t form))
+            :ret (check-type v form))
+          (if (= k :defaults)
+              (tset class.defaults mname v)
+              (do
+                (when (= nil (. class.types mname)) (tset class.types mname {}))
+                (tset (. class.types mname) k v))))
+        (table.remove form 4))
+      (let [with-self (sequence (sym :self))]
+        (each [_ p (ipairs params)] (table.insert with-self p))
+        (tset form 1 (sym :fn))
+        (tset form 2 (sym (.. (tostring class-sym) "." mname)))
+        (tset form 3 with-self))
+      (for [i 4 (length form)]
+        (rewrite-super (. form i) base))
+      form)))
+
+(fn define [tool name base ...]
+  (assert-compile (plain-sym? name) "defnode needs a class name: (defnode Name Base …)" name)
+  (assert-compile (not= nil base) "defnode needs a base: gd.Node2D or a required script" name)
+  (let [class-name (tostring name)
+        forms [...]
+        class {:exports [] :properties {} :signals {} :defaults {} :types {}}
+        header {}
+        seen {}
+        methods []]
+    (var i 1)
+    (while (and (<= i (length forms)) (not (list? (. forms i))))
+      (let [key (. forms i)]
+        (assert-compile (and (= :string (type key)) (. header-keys key))
+                        (.. "unknown defnode option " (tostring key) " (use :icon or :global)") name)
+        (assert-compile (< i (length forms)) (.. "defnode option :" key " has no value") name)
+        (tset header key (. forms (+ i 1)))
+        (set i (+ i 2))))
+    (assert-compile (or (= false header.global) (class-name:match "^[%a_][%w_]*$"))
+                    (.. "'" class-name "' can't be a class name; rename it or add :global false") name)
+    ;; A base that isn't a name is evaluated once, for the table and super
+    (let [base-sym (if (sym? base) base (gensym :base))]
+      (for [j i (length forms)]
+        (let [form (. forms j)
+              head (and (list? form) (sym? (. form 1)) (tostring (. form 1)))]
+          (case head
+            :prop (prop class form seen {})
+            :signal (signal class form seen)
+            :method (table.insert methods (method class form seen name base-sym))
+            :alias (table.insert methods (alias class form seen name))
+            (where section-kind (. section-levels section-kind)) (section class form seen {})
+            _ (assert-compile false
+                              (.. "defnode's body has prop, signal, alias, method and section forms, not "
+                                  (if head (.. "(" head " …)") (tostring form)))
+                              form))))
+      (let [tbl {:extends base-sym}]
+        (when (not= false header.global) (tset tbl :class_name class-name))
+        (when tool (tset tbl :tool true))
+        (when (not= nil header.icon) (tset tbl :icon header.icon))
+        (when (> (length class.exports) 0)
+          (tset tbl :exports (sequence (table.unpack (group-sections class.exports)))))
+        (each [_ k (ipairs [:properties :signals :defaults :types])]
+          (when (next (. class k)) (tset tbl k (. class k))))
+        (let [out (list (sym :do))]
+          (when (not (sym? base)) (table.insert out (list (sym :local) base-sym base)))
+          (table.insert out (list (sym :local) name tbl))
+          (each [_ m (ipairs methods)] (table.insert out m))
+          (table.insert out name)
+          out)))))
+
+(fn defnode [name base ...]
+  "Defines a script class: (defnode Name Base option… prop/signal/method…)"
+  (define false name base ...))
+
+(fn deftool [name base ...]
+  "defnode for a tool script, which also runs in the editor"
+  (define true name base ...))
+
+{: defnode : deftool}

@@ -18,8 +18,11 @@ func _initialize() -> void:
 	plain.name = "Plain"
 	a.keep(plain)
 	check(a.use_kept() == "Plain", "plain node usable while alive")
+	check(a.kept_valid() == true, "is_instance_valid on a live node")
 	plain.free()
 	check(a.use_kept() == null, "freed plain node raises an error (call returns null)")
+	check(a.kept_valid() == false, "is_instance_valid on a freed node is false, not an error")
+	check(a.valid_misc() == true, "is_instance_valid: nil, a number, a RefCounted, a singleton")
 
 	# RefCounted held only by Lua stays alive and usable (no check needed)
 	check(a.make_ref() >= 1, "RefCounted created from Lua")
@@ -35,8 +38,10 @@ func _initialize() -> void:
 	root.add_child(b)
 	a.keep_self_of(b)
 	check(a.use_other() == "Other", "other script's self table usable while alive")
+	check(a.other_valid() == true, "is_instance_valid on a live scripted node's self table")
 	b.free()
 	check(a.use_other() == null, "freed scripted node raises an error (call returns null)")
+	check(a.other_valid() == false, "is_instance_valid on a freed scripted node is false")
 
 	# Indexed and keyed access (ADR 0020)
 	var d := {}
@@ -91,12 +96,56 @@ func _initialize() -> void:
 	check(not v_compile.valid and v_compile.errors.size() == 1 and v_compile.errors[0].line > 2, "errors only the compiler finds (too many locals) (%s)" % [v_compile.errors])
 	var v_fnl = lang.validate_script("(local M {})\n(fn M._ready [self] nil)\n\n(fn M.go [self] 1)\nM\n", "res://v.fnl")
 	check(v_fnl.valid and v_fnl.functions == PackedStringArray(["_ready:2", "go:4"]), "Fennel validates, with functions at Fennel lines (%s)" % v_fnl)
+	# defnode (ADR 0057): methods listed at their Fennel lines, errors at the form
+	var v_def = lang.validate_script("(defnode N gd.Node\n  :global false\n  (prop x 1)\n  (method _ready [] nil)\n\n  (method go [] 1))\n", "res://v.fnl")
+	check(v_def.valid and v_def.functions == PackedStringArray(["_ready:4", "go:6"]), "defnode validates, with its methods at Fennel lines (%s)" % v_def)
+	var v_def_bad = lang.validate_script("(defnode N gd.Node\n  :global false\n  (fn f [] 1))\n", "res://v.fnl")
+	check(not v_def_bad.valid and v_def_bad.errors.size() == 1 and v_def_bad.errors[0].line == 3 and "prop, signal, alias, method and section" in v_def_bad.errors[0].message, "a bad defnode form is an error at its line (%s)" % v_def_bad)
 	var v_fnl_parse = lang.validate_script("(local M {})\n(fn M.f [self]\n  (print \"x\"\nM\n", "res://v.fnl")
 	check(not v_fnl_parse.valid and "Parse error" in v_fnl_parse.errors[0].message, "Fennel parse errors (%s)" % [v_fnl_parse.errors])
 	var v_fnl_compile = lang.validate_script("(local M {})\n(fn M.f [self]\n  (let [x] x))\nM\n", "res://v.fnl")
 	check(not v_fnl_compile.valid and v_fnl_compile.errors[0].line == 3 and v_fnl_compile.errors[0].column == 8, "Fennel compile errors, with line and column (%s)" % [v_fnl_compile.errors])
 
+	# New scripts (ADR 0058): Fennel is its own language for the editor's
+	# dialog, and each language's template is valid
+	var languages: PackedStringArray = []
+	for i in Engine.get_script_language_count():
+		languages.append(Engine.get_script_language(i).get_class())
+	check("LuauLanguage" in languages and "FennelLanguage" in languages, "Luau and Fennel are languages (%s)" % languages)
+	var t_luau: String = LuauLanguage.template_source("luau", "player_ship", "Node2D")
+	check("extends = gd.Node2D" in t_luau and lang.validate_script(t_luau, "res://t.luau").valid, "the Luau template (%s)" % t_luau)
+	var t_fnl: String = LuauLanguage.template_source("fnl", "player_ship", "Node2D")
+	check(t_fnl.begins_with("(defnode PlayerShip gd.Node2D") and lang.validate_script(t_fnl, "res://t.fnl").valid, "the Fennel template, named after the file (%s)" % t_fnl)
+	var t_sub: String = LuauLanguage.template_source("fnl", "boss", "LuauFeatures")
+	check(t_sub.begins_with("(local LuauFeatures (require \"res://features/derived.luau\"))") and "(defnode Boss LuauFeatures" in t_sub and lang.validate_script(t_sub, "res://t.fnl").valid, "a template extending a Luau class requires it (%s)" % t_sub)
+
 	check(a.new_control_checks(), "a Label from Label.new() is set up: position, layout and theme work")
+	check(a.conversion_checks(), "gd.int, gd.float, gd.String and gd.bool convert with Godot's constructors (ADR 0059)")
+	var typed := Node.new()
+	typed.set_script(load("res://features/typed_by_script.luau"))
+	var props := {}
+	for p in typed.get_property_list():
+		props[p.name] = p
+	check(props.boss.type == TYPE_OBJECT and props.boss.hint == PROPERTY_HINT_NODE_TYPE and props.boss.hint_string == "LuauFeatures", "a required script as a type (%s)" % props.boss)
+	check(props.texture.type == TYPE_OBJECT and props.texture.hint_string == "Texture2D" and props.count.type == TYPE_INT, "gd values as types")
+	check(props.title.type == TYPE_STRING and typed.title == "Node", "a string is a default, not a type name")
+	var hit: Dictionary = typed.get_signal_list().filter(func(sg): return sg.name == "hit")[0]
+	check(hit.args.map(func(a): return [a.name, a.type]) == [["damage", TYPE_INT], ["by", TYPE_NIL], ["where", TYPE_VECTOR2]], "signal arguments with and without types (%s)" % [hit.args])
+	typed.free()
+	var fresh_a := Node.new()
+	var fresh_b := Node.new()
+	fresh_a.set_script(load("res://features/fresh_defaults.luau"))
+	fresh_b.set_script(load("res://features/fresh_defaults.luau"))
+	fresh_a.items.append(2)
+	fresh_a.tags["k"] = 1
+	fresh_a.nested[0].append(2)
+	check(fresh_b.items == [1] and fresh_b.tags == {} and fresh_b.nested == [[1]], "each instance has its own Array and Dictionary defaults (%s %s %s)" % [fresh_b.items, fresh_b.tags, fresh_b.nested])
+	check(typeof(fresh_a.tags) == TYPE_DICTIONARY, "a {} default typed Dictionary is a Dictionary")
+	fresh_a.empty.append(1)
+	check(fresh_b.empty == [], "an Array declared by type alone is new for each instance")
+	check(fresh_a.curve is Curve and fresh_a.curve != fresh_b.curve, "an object default is made for each instance")
+	fresh_a.free()
+	fresh_b.free()
 	check(a.require_alias_checks(), "require(\"@res/…\") loads the same module as res:// and ./ (ADR 0048)")
 
 	# Export sections (ADR 0051): the property list as Godot sees it
@@ -123,6 +172,7 @@ func _initialize() -> void:
 	var fz = a.frozen_checks()
 	check(fz.blocked == fz.writes, "writes to libraries, type tables and shared metatables fail (%d of %d)" % [fz.blocked, fz.writes])
 	check(fz.own_global and fz.package_loaded, "scripts' own globals and package.loaded stay writable")
+	check("gd has no member 'Nod2D'" in str(fz.unknown) and "gd has no member number" in str(fz.unknown_key), "reading an unknown gd member is an error (%s / %s)" % [fz.unknown, fz.unknown_key])
 	check(fz.cached, "lookups that cache into frozen tables still work, twice")
 
 	# Strict vector dimensions (ADR 0045)

@@ -1,6 +1,6 @@
 # 0049. `extends` takes a Luau class_name
 
-- **Status:** Accepted
+- **Status:** Superseded by [0056](0056-godot-api-under-gd.md)
 - **Date:** 2026-10-06
 
 ## Context

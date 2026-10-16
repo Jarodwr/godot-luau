@@ -37,7 +37,7 @@ expect "$out" "mistakes.luau(4,1): TypeError: Key 'add_chld' not found in extern
 expect "$out" "mistakes.luau(5,17): TypeError: Expected this to be 'Vector2', but got 'string'"
 expect "$out" "mistakes.luau(6,13): TypeError: Expected this to be 'number', but got 'string'"
 expect "$out" "mistakes.luau(7,1): TypeError: Expected this to be 'number', but got 'string'"
-expect "$out" "mistakes.luau(8,11): TypeError: Unknown global 'Tmer'"
+expect "$out" "mistakes.luau(8,11): TypeError: Key 'Tmer' not found in external type 'Godot'"
 expect "$out" "mistakes.luau(9,20): TypeError: Expected this to be"
 count=$(printf '%s\n' "$out" | grep -c 'TypeError')
 expect "errors: $count" "errors: 6"

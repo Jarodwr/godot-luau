@@ -89,7 +89,9 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         with:
           name: definitions
-          path: addons/godot_luau/types/godot.d.luau
+          path: |
+            addons/godot_luau/types/godot.d.luau
+            addons/godot_luau/types/gd_docs.fnl
           if-no-files-found: error
 
   package:
@@ -106,10 +108,10 @@ jobs:
         run: |
           addon=dist/addons/godot_luau
           mkdir -p "$addon/bin" "$addon/types"
-          cp addons/godot_luau/godot_luau.gdextension addons/godot_luau/fennel.lua LICENSE "$addon/"
+          cp addons/godot_luau/godot_luau.gdextension addons/godot_luau/fennel.lua addons/godot_luau/macros.fnlm addons/godot_luau/lsp.fnlm LICENSE "$addon/"
           touch "$addon/types/.gdignore"
           cp artifacts/lib-*/* "$addon/bin/"
-          cp artifacts/definitions/godot.d.luau "$addon/types/"
+          cp artifacts/definitions/godot.d.luau artifacts/definitions/gd_docs.fnl "$addon/types/"
           find dist -type f | sort
           test -f "$addon/types/.gdignore"
           (cd dist && zip -qr ../godot-luau.zip addons)

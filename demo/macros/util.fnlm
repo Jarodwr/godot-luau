@@ -1,0 +1,15 @@
+;; Macros for features/fennel_macros.fnl (docs/adr/0062)
+
+(fn twice [x]
+  `(* 2 ,x))
+
+(fn thrice [x]
+  `(* 3 ,x))
+
+(local (name path) ...)
+
+;; This file's name and path, as Fennel gives a macro module
+(fn whoami []
+  (.. name " " path))
+
+{: twice : thrice : whoami}

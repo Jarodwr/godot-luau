@@ -44,7 +44,7 @@ func _initialize() -> void:
 	write("sub/user.luau", """
 local U = require("../util")
 local Same = require("hot_test.util")
-local User = { extends = "Node" }
+local User = { extends = gd.Node }
 function User:fetch() return U.get() end
 function User:value() return U.VALUE end
 function User:inc() return U.inc() end
@@ -56,7 +56,7 @@ function User:via_self() return self:fetch() end
 return User
 """)
 	write("base.luau", """
-local Base = { extends = "Node" }
+local Base = { extends = gd.Node }
 function Base:greet() return "base 1" end
 return Base
 """)
@@ -67,17 +67,26 @@ function Derived:call_greet() return self:greet() end
 return Derived
 """)
 	write("fn_module.luau", "return function(x) return x * 2 end")
-	write("cycle_a.luau", "local B = require('./cycle_b'); return { extends = 'Node' }")
+	write("cycle_a.luau", "local B = require('./cycle_b'); return { extends = gd.Node }")
 	write("cycle_b.luau", "local A = require('./cycle_a'); return {}")
 	write("uses_fn.luau", """
 local double = require("./fn_module")
-local S = { extends = "Node" }
+local S = { extends = gd.Node }
 function S:run(x) return double(x) end
 return S
 """)
+	write("answer.fnlm", "(fn answer [] 1) {: answer}")
+	write("macro_user.fnl", """
+(import-macros {: answer} "./answer")
+(import-macros by-path "res://hot_test/answer.fnlm")
+(local M {:extends gd.Node})
+(fn M.answer [self] (answer))
+(fn M.by_path [self] (by-path.answer))
+M
+""")
 	write("fennel_user.fnl", """
 (local U (require :hot_test.util))
-(local F {:extends "Node"})
+(local F {:extends gd.Node})
 (fn F.fetch [self] (U.get))
 F
 """)
@@ -115,6 +124,9 @@ func run_checks() -> void:
 	check(cycle == null or not cycle.can_instantiate(), "a require cycle fails with an error instead of hanging")
 	var fennel := node_with("fennel_user.fnl")
 	check(fennel.fetch() == 1, "Fennel requires a Luau module by dotted name")
+	var macro_user := node_with("macro_user.fnl")
+	check(macro_user.answer() == 1, "a script imports macros from a .fnlm beside it")
+	check(macro_user.by_path() == 1, "and by its res:// path")
 
 	# Reloading a module: users see the new code, instances keep their fields
 	user.set_state(5)
@@ -131,8 +143,8 @@ func run_checks() -> void:
 	write("sub/user.luau", FileAccess.get_file_as_string(DIR.path_join("sub/user.luau")).replace(
 		"function User:fetch() return U.get() end",
 		"function User:fetch() return 100 + U.get() end").replace(
-		"local User = { extends = \"Node\" }",
-		"local User = { extends = \"Node\", properties = { added = 7 } }"))
+		"local User = { extends = gd.Node }",
+		"local User = { extends = gd.Node, properties = { added = { default = 7 } } }"))
 	check(reload("sub/user.luau") == OK, "class script reloads")
 	check(user.fetch() == 102, "Godot calls the new method")
 	check(user.via_self() == 102, "Lua calls through self call the new method")
@@ -148,7 +160,7 @@ func run_checks() -> void:
 	var derived := node_with("derived.luau")
 	check(derived.call_greet() == "base 1" and derived.greet() == "base 1", "derived instance before")
 	write("base.luau", """
-local Base = { extends = "Node" }
+local Base = { extends = gd.Node }
 function Base:greet() return "base 2" end
 return Base
 """)
@@ -161,12 +173,15 @@ return Base
 	await create_timer(1.2).timeout
 	check(user.fetch() == 130, "the file watcher reloads a changed module (got %s)" % user.fetch())
 	write("base.luau", """
-local Base = { extends = "Node" }
+local Base = { extends = gd.Node }
 function Base:greet() return "watched" end
 return Base
 """)
 	await create_timer(1.2).timeout
 	check(derived.greet() == "watched", "the file watcher reloads a changed base script")
+	write("answer.fnlm", "(fn answer [] 2) {: answer}")
+	await create_timer(1.2).timeout
+	check(macro_user.answer() == 2, "the file watcher compiles a macro file's users again (got %s)" % macro_user.answer())
 
-	for node in [user, uses_fn, fennel, derived]:
+	for node in [user, uses_fn, fennel, macro_user, derived]:
 		node.free()

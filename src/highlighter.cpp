@@ -22,9 +22,28 @@ const char *const LUAU_KEYWORDS[] = { "and", "false", "function", "local", "nil"
 const char *const LUAU_CONTROL_FLOW[] = { "break", "continue", "do", "else", "elseif", "end", "for", "if", "in", "repeat", "return", "then", "until", "while" };
 const char *const FENNEL_SPECIALS[] = { "fn", "lambda", "λ", "local", "var", "global", "set", "tset", "let", "values", "not", "and", "or", "length",
 	"macro", "macros", "import-macros", "require-macros", "include", "quote", "hashfn", "partial", "pick-values", "doto", "->", "->>", "-?>", "-?>>",
-	"..", "#", "accumulate", "faccumulate", "icollect", "collect", "fcollect", "comment", "eval-compiler", "lua" };
+	"..", "#", "accumulate", "faccumulate", "icollect", "collect", "fcollect", "comment", "eval-compiler", "lua",
+	"defnode", "deftool", "method", "prop", "signal", "alias", "super", "category", "group", "subgroup" };  // godot-luau's macros (docs/adr/0057)
 const char *const FENNEL_CONTROL_FLOW[] = { "if", "when", "each", "for", "while", "do", "match", "case", "match-try", "case-try", "where", "or" };
 const char *const LITERALS[] = { "true", "false", "nil" };
+
+} // namespace
+
+PackedStringArray fennel_reserved_words() {
+	PackedStringArray words;
+	for (const char *w : FENNEL_SPECIALS) {
+		words.push_back(String::utf8(w));
+	}
+	for (const char *w : FENNEL_CONTROL_FLOW) {
+		words.push_back(String::utf8(w));
+	}
+	for (const char *w : LITERALS) {
+		words.push_back(String::utf8(w));
+	}
+	return words;
+}
+
+namespace {
 
 template <size_t N>
 bool one_of(const String &word, const char *const (&words)[N]) {
@@ -235,6 +254,7 @@ LuauHighlighter::State LuauHighlighter::highlight(const String &line, State stat
 
 	char32_t previous = 0;  // the last non-space character before the token
 	int previous_end = -1;  // where it ended
+	int gd_end = -1;  // where the last `gd` (not a field) ended
 	while (i < n) {
 		char32_t c = line[i];
 		if (c == ' ' || c == '\t') {
@@ -282,8 +302,9 @@ LuauHighlighter::State LuauHighlighter::highlight(const String &line, State stat
 				} else if (previous == '(') {
 					paint(start, function);
 				} else {
-					int dot = word.find(".");
-					String head = dot > 0 ? word.substr(0, dot) : word;
+					// Node2D, gd.Node2D, gd.Node2D.new (docs/adr/0056)
+					PackedStringArray parts = word.split(".");
+					String head = parts.size() > 1 && parts[0] == "gd" ? parts[1] : parts[0];
 					paint(start, engine_types.has(head) ? engine_type : (base_types.has(head) ? base_type : text));
 				}
 			} else {
@@ -345,7 +366,14 @@ LuauHighlighter::State LuauHighlighter::highlight(const String &line, State stat
 			bool call = next == '(' || next == '"' || next == '{' || next == '\'' || next == '`';
 			// x.y and v:m() touch their '.' or ':'; "n: Node" is a type annotation
 			bool field = (previous == '.' || previous == ':') && start == previous_end;
-			if (!field && one_of(word, LUAU_CONTROL_FLOW)) {
+			// gd.Node2D is a type, as Node2D in an annotation (docs/adr/0056)
+			bool gd_member = field && previous == '.' && gd_end == start - 1;
+			if (!field && word == "gd") {
+				gd_end = i;
+			}
+			if (gd_member && (engine_types.has(word) || base_types.has(word))) {
+				paint(start, engine_types.has(word) ? engine_type : base_type);
+			} else if (!field && one_of(word, LUAU_CONTROL_FLOW)) {
 				paint(start, control_flow);
 			} else if (!field && one_of(word, LUAU_KEYWORDS)) {
 				paint(start, keyword);

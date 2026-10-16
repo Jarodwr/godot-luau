@@ -1,0 +1,9 @@
+;; Imported as "./local_macros" from fennel_macros.fnl. It imports util by a
+;; name relative to itself, not to the script that imports it.
+(import-macros {: twice} "../macros/util")
+
+(fn quadruple [x]
+  (let [k (twice (twice 1))]                   ; 4, when this file compiles
+    `(* ,k ,x)))
+
+{: quadruple}

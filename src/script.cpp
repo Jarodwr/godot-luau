@@ -1,6 +1,8 @@
 #include "script.h"
 
 #include "api.h"
+#include "builtins.h"
+#include "highlighter.h"
 #include "internal.h"
 
 #include <godot_cpp/classes/engine.hpp>
@@ -24,6 +26,7 @@
 namespace luau {
 
 LuauLanguage *LuauLanguage::singleton = nullptr;
+FennelLanguage *FennelLanguage::fennel_singleton = nullptr;
 
 // Scripts by their class table, for `extends = require("res://…")`
 static HashMap<const void *, LuauScript *> scripts_by_class;
@@ -41,6 +44,13 @@ static HashMap<String, LuauScript *> scripts_by_path;
 static HashMap<String, HashSet<String>> dependents;
 // Scripts whose chunk is running now (nested by require)
 static std::vector<LuauScript *> loading;
+// Macro files Fennel scripts imported (docs/adr/0062): their modification
+// time and text, to notice a change. Their users are in dependents.
+struct MacroFile {
+	uint64_t mtime = 0;
+	String text;
+};
+static HashMap<String, MacroFile> macro_files;
 // Scripts being reloaded now (with their dependents)
 static HashSet<String> reloading_paths;
 
@@ -147,6 +157,7 @@ static void main_loop_freed(void *, void *, void *) {
 	main_loop_gone = true;
 	required_scripts.clear();
 	dependents.clear();
+	macro_files.clear();
 	close_state();
 }
 
@@ -432,6 +443,41 @@ static int self_newindex(lua_State *L) {
 	return 0;
 }
 
+// The zero value of a type (what a declared property without a default has)
+static Variant zero_value(Variant::Type type) {
+	if (type == Variant::NIL || type == Variant::OBJECT) {
+		return Variant();
+	}
+	alignas(Variant) unsigned char bytes[sizeof(Variant)];
+	GDExtensionCallError error;
+	gdextension_interface::variant_construct((GDExtensionVariantType)type, bytes, nullptr, 0, &error);
+	Variant *value = reinterpret_cast<Variant *>(bytes);
+	Variant result = *value;
+	value->~Variant();
+	return result;
+}
+
+// A property's starting value for one instance (docs/adr/0060): a function
+// default is called for each instance, as GDScript runs an initializer, and
+// an Array or Dictionary without a default is a new empty one
+static Variant initial_value(lua_State *L, const LuauScript::PropertyDef &property) {
+	if (property.default_ref != LUA_NOREF) {
+		lua_getref(L, property.default_ref);
+		if (lua_pcall(L, 0, 1, ERROR_HANDLER) != LUA_OK) {
+			lua_pop(L, 1);  // reported by the handler
+			return zero_value(property.type);
+		}
+		Variant value = coerce_to_type(to_variant(L, -1), property.type);
+		lua_pop(L, 1);
+		return value;
+	}
+	Variant::Type type = property.default_value.get_type();
+	if (type == Variant::ARRAY || type == Variant::DICTIONARY) {
+		return zero_value(type);
+	}
+	return property.default_value;
+}
+
 static void create_self_table(lua_State *L, Instance *instance) {
 	lua_newtable(L);  // T
 	lua_newtable(L);  // M
@@ -462,8 +508,12 @@ static void create_self_table(lua_State *L, Instance *instance) {
 
 	// Plain properties start with their defaults, as fields
 	for (const LuauScript::PropertyDef &property : instance->script->properties) {
-		if (!property.has_accessors() && property.default_value.get_type() != Variant::NIL) {
-			push_variant(L, property.default_value);
+		if (property.has_accessors()) {
+			continue;
+		}
+		Variant value = initial_value(L, property);
+		if (value.get_type() != Variant::NIL) {
+			push_variant(L, value);
 			lua_rawsetfield(L, -2, String(property.name).utf8().get_data());
 		}
 	}
@@ -763,7 +813,7 @@ static GDExtensionBool property_get_revert_func(Instance *instance, GDExtensionC
 	if (property == nullptr) {
 		return false;
 	}
-	*(Variant *)r_ret = property->default_value;
+	*(Variant *)r_ret = initial_value(state(), *property);
 	return true;
 }
 
@@ -931,8 +981,8 @@ static GDExtensionBool is_placeholder_func(Instance *) {
 	return false;
 }
 
-static GDExtensionScriptLanguagePtr get_language_func(Instance *) {
-	return LuauLanguage::get_singleton()->_owner;
+static GDExtensionScriptLanguagePtr get_language_func(Instance *instance) {
+	return instance->script->_get_language()->_owner;
 }
 
 static GDExtensionBool refcount_decremented_func(Instance *) {
@@ -1073,8 +1123,8 @@ static GDExtensionBool static_is_placeholder_func(StaticInstance *) {
 	return false;
 }
 
-static GDExtensionScriptLanguagePtr static_get_language_func(StaticInstance *) {
-	return LuauLanguage::get_singleton()->_owner;
+static GDExtensionScriptLanguagePtr static_get_language_func(StaticInstance *s) {
+	return s->script->_get_language()->_owner;
 }
 
 static void static_free_func(StaticInstance *s) {
@@ -1109,40 +1159,53 @@ void LuauScript::ensure_static_instance() {
 
 namespace {
 
-// A Godot type name ("float", "Vector2", "Node"…): its Variant type and, for
-// objects, the class. False if unknown.
-bool parse_type(const String &name, Variant::Type &r_type, StringName &r_class) {
+// True if the value is a type: a built-in type (gd.int, gd.Vector2), an
+// engine class (gd.Node) or a required script
+bool is_type(lua_State *L, int index) {
+	Variant::Type type;
+	return builtin_type_table(L, index, type) || class_table_info(L, index) != nullptr ||
+			(lua_istable(L, index) && scripts_by_class.has(lua_topointer(L, index)));
+}
+
+// A declared type (docs/adr/0059): its Variant type and, for objects, the
+// class (a script's class_name, if it has one). Anything else, a string
+// included, is false, with the error in r_error if it's the first.
+bool parse_type(lua_State *L, int index, const String &what, Variant::Type &r_type, StringName &r_class, String &r_error, StringName *r_native = nullptr) {
 	r_class = StringName();
-	if (name == "Variant" || name == "any") {
-		r_type = Variant::NIL;
+	if (builtin_type_table(L, index, r_type)) {
 		return true;
 	}
-	for (int i = 1; i < Variant::VARIANT_MAX; i++) {
-		if (Variant::get_type_name((Variant::Type)i) == name) {
-			r_type = (Variant::Type)i;
+	if (ClassInfo *cls = class_table_info(L, index)) {
+		r_type = Variant::OBJECT;
+		r_class = cls->name;
+		if (r_native) {
+			*r_native = cls->name;
+		}
+		return true;
+	}
+	if (lua_istable(L, index)) {
+		if (LuauScript **script = scripts_by_class.getptr(lua_topointer(L, index))) {
+			r_type = Variant::OBJECT;
+			r_class = (*script)->global_name.is_empty() ? (*script)->base_type : (*script)->global_name;
+			if (r_native) {
+				*r_native = (*script)->base_type;
+			}
 			return true;
 		}
 	}
-	if (ClassDB::class_exists(name)) {
-		r_type = Variant::OBJECT;
-		r_class = name;
-		return true;
+	if (r_error.is_empty()) {
+		String message = "the type of " + what + " must be gd.int, gd.Vector2, an engine class (gd.Node) or a required script";
+		if (lua_type(L, index) == LUA_TSTRING) {  // the old form
+			String name = String::utf8(lua_tostring(L, index));
+			bool known = ClassDB::class_exists(StringName(name));
+			for (int i = 1; i < Variant::VARIANT_MAX && !known; i++) {
+				known = Variant::get_type_name((Variant::Type)i) == name;
+			}
+			message += known ? ", gd." + name + ", not the string \"" + name + "\"" : ", not a string";
+		}
+		r_error = message;
 	}
 	return false;
-}
-
-// The zero value of a type (what a declared property without a default has)
-Variant zero_value(Variant::Type type) {
-	if (type == Variant::NIL || type == Variant::OBJECT) {
-		return Variant();
-	}
-	alignas(Variant) unsigned char bytes[sizeof(Variant)];
-	GDExtensionCallError error;
-	gdextension_interface::variant_construct((GDExtensionVariantType)type, bytes, nullptr, 0, &error);
-	Variant *value = reinterpret_cast<Variant *>(bytes);
-	Variant result = *value;
-	value->~Variant();
-	return result;
 }
 
 String field_string(lua_State *L, int table, const char *key) {
@@ -1168,76 +1231,95 @@ String join_sequence(lua_State *L, int index) {
 	return joined;
 }
 
-// One property declaration (value at `index`):
-//   { type = "float", default = 2.0, get = "get_x", set = "set_x",
+// One property declaration (value at `index`), always a table
+// (docs/adr/0060):
+//   { type = gd.float, default = 2.0, get = "get_x", set = "set_x",
 //     range = {0, 10, 0.5} | enum = {"A", "B"} | multiline = true |
 //     file = "*.png" | dir = true | hint = n, hint_string = "…" }
-// or a type name ("float"), or a default value (its type inferred).
-LuauScript::PropertyDef parse_property(lua_State *L, const StringName &name, int index, bool exported) {
+// A function default is called for each instance; any other default is a
+// value no instance can change for another (not a table or an object).
+LuauScript::PropertyDef parse_property(lua_State *L, const StringName &name, int index, bool exported, String &r_error) {
 	index = lua_absindex(L, index);
 	LuauScript::PropertyDef p;
 	p.name = name;
 	p.exported = exported;
 	bool has_type = false;
-	if (lua_type(L, index) == LUA_TTABLE) {
-		String type = field_string(L, index, "type");
-		if (!type.is_empty()) {
-			has_type = parse_type(type, p.type, p.class_name);
-			if (!has_type) {
-				UtilityFunctions::push_warning("Unknown type '" + type + "' for property '" + String(name) + "'");
-			}
+	String what = "'" + String(name) + "'";
+	String kind = exported ? "export " : "property ";
+	StringName native;  // the engine class of an object type
+	if (lua_type(L, index) != LUA_TTABLE || is_type(L, index)) {
+		if (r_error.is_empty()) {
+			r_error = kind + what + " must be a table: { default = ... } or { type = ... }";
 		}
-		lua_rawgetfield(L, index, "default");
-		if (!lua_isnil(L, -1)) {
+		return p;
+	}
+	lua_rawgetfield(L, index, "type");
+	if (!lua_isnil(L, -1)) {
+		has_type = parse_type(L, -1, what, p.type, p.class_name, r_error, &native);
+	}
+	lua_pop(L, 1);
+	lua_rawgetfield(L, index, "default");
+	if (lua_isfunction(L, -1)) {
+		// Called now only for the editor's default (and the type, if none is
+		// declared); each instance calls it again
+		p.default_ref = lua_ref(L, -1);
+		if (lua_pcall(L, 0, 1, ERROR_HANDLER) == LUA_OK && !lua_isnil(L, -1)) {
 			p.default_value = to_variant(L, -1);
 			p.has_default = true;
 		}
-		lua_pop(L, 1);
-		p.category = field_string(L, index, "category");
-		p.group = field_string(L, index, "group");
-		p.subgroup = field_string(L, index, "subgroup");
-		p.getter = field_string(L, index, "get");
-		p.setter = field_string(L, index, "set");
-		p.accessors = !p.getter.is_empty() || !p.setter.is_empty();
-		lua_rawgetfield(L, index, "range");
-		if (lua_istable(L, -1)) {
-			p.hint = PROPERTY_HINT_RANGE;
-			p.hint_string = join_sequence(L, -1);
-		}
-		lua_pop(L, 1);
-		lua_rawgetfield(L, index, "enum");
-		if (lua_istable(L, -1)) {
-			p.hint = PROPERTY_HINT_ENUM;
-			p.hint_string = join_sequence(L, -1);
-		}
-		lua_pop(L, 1);
-		lua_rawgetfield(L, index, "multiline");
-		if (lua_toboolean(L, -1)) {
-			p.hint = PROPERTY_HINT_MULTILINE_TEXT;
-		}
-		lua_pop(L, 1);
-		String file = field_string(L, index, "file");
-		if (!file.is_empty()) {
-			p.hint = PROPERTY_HINT_FILE;
-			p.hint_string = file;
-		}
-		lua_rawgetfield(L, index, "dir");
-		if (lua_toboolean(L, -1)) {
-			p.hint = PROPERTY_HINT_DIR;
-		}
-		lua_pop(L, 1);
-		lua_rawgetfield(L, index, "hint");
-		if (lua_type(L, -1) == LUA_TNUMBER) {
-			p.hint = (PropertyHint)(int)lua_tonumber(L, -1);
-			p.hint_string = field_string(L, index, "hint_string");
-		}
-		lua_pop(L, 1);
-	} else if (lua_type(L, index) == LUA_TSTRING && parse_type(String::utf8(lua_tostring(L, index)), p.type, p.class_name)) {
-		has_type = true;
+		lua_pop(L, 1);  // the result, or the error the handler reported
 	} else {
-		p.default_value = to_variant(L, index);
-		p.has_default = true;
+		if (!lua_isnil(L, -1)) {
+			p.default_value = to_variant(L, -1);
+			p.has_default = true;
+			Variant::Type type = p.default_value.get_type();
+			bool shared = lua_istable(L, -1) || type == Variant::ARRAY || type == Variant::DICTIONARY ||
+					(type == Variant::OBJECT && p.default_value.operator Object *() != nullptr);
+			if (shared && r_error.is_empty()) {
+				r_error = "the default of " + kind + what + " would be one value every instance shares: default = function() return ... end makes one per instance";
+			}
+		}
+		lua_pop(L, 1);
 	}
+	p.category = field_string(L, index, "category");
+	p.group = field_string(L, index, "group");
+	p.subgroup = field_string(L, index, "subgroup");
+	p.getter = field_string(L, index, "get");
+	p.setter = field_string(L, index, "set");
+	p.accessors = !p.getter.is_empty() || !p.setter.is_empty();
+	lua_rawgetfield(L, index, "range");
+	if (lua_istable(L, -1)) {
+		p.hint = PROPERTY_HINT_RANGE;
+		p.hint_string = join_sequence(L, -1);
+	}
+	lua_pop(L, 1);
+	lua_rawgetfield(L, index, "enum");
+	if (lua_istable(L, -1)) {
+		p.hint = PROPERTY_HINT_ENUM;
+		p.hint_string = join_sequence(L, -1);
+	}
+	lua_pop(L, 1);
+	lua_rawgetfield(L, index, "multiline");
+	if (lua_toboolean(L, -1)) {
+		p.hint = PROPERTY_HINT_MULTILINE_TEXT;
+	}
+	lua_pop(L, 1);
+	String file = field_string(L, index, "file");
+	if (!file.is_empty()) {
+		p.hint = PROPERTY_HINT_FILE;
+		p.hint_string = file;
+	}
+	lua_rawgetfield(L, index, "dir");
+	if (lua_toboolean(L, -1)) {
+		p.hint = PROPERTY_HINT_DIR;
+	}
+	lua_pop(L, 1);
+	lua_rawgetfield(L, index, "hint");
+	if (lua_type(L, -1) == LUA_TNUMBER) {
+		p.hint = (PropertyHint)(int)lua_tonumber(L, -1);
+		p.hint_string = field_string(L, index, "hint_string");
+	}
+	lua_pop(L, 1);
 	if (!has_type && p.has_default) {
 		p.type = p.default_value.get_type();
 	}
@@ -1246,11 +1328,12 @@ LuauScript::PropertyDef parse_property(lua_State *L, const StringName &name, int
 	} else {
 		p.default_value = zero_value(p.type);
 	}
-	if (p.type == Variant::OBJECT && p.hint == PROPERTY_HINT_NONE && !p.class_name.is_empty()) {
-		if (ClassDB::is_parent_class(p.class_name, "Node")) {
+	if (p.type == Variant::OBJECT && p.hint == PROPERTY_HINT_NONE && !native.is_empty()) {
+		// A script type's hint names its class_name (docs/adr/0059)
+		if (ClassDB::is_parent_class(native, "Node")) {
 			p.hint = PROPERTY_HINT_NODE_TYPE;
 			p.hint_string = p.class_name;
-		} else if (ClassDB::is_parent_class(p.class_name, "Resource")) {
+		} else if (ClassDB::is_parent_class(native, "Resource")) {
 			p.hint = PROPERTY_HINT_RESOURCE_TYPE;
 			p.hint_string = p.class_name;
 		}
@@ -1352,6 +1435,17 @@ static void clear_methods(LuauScript *script, lua_State *L) {
 	script->can_revert_method = script->get_revert_method = nullptr;
 }
 
+static void clear_property_defaults(LuauScript *script, lua_State *L) {
+	if (L) {
+		for (const LuauScript::PropertyDef &property : script->properties) {
+			if (property.default_ref != LUA_NOREF) {
+				lua_unref(L, property.default_ref);
+			}
+		}
+	}
+	script->properties.clear();
+}
+
 static void unregister_class_table(LuauScript *script) {
 	for (auto it = scripts_by_class.begin(); it != scripts_by_class.end(); ++it) {
 		if (it->value == script) {
@@ -1376,6 +1470,7 @@ LuauScript::~LuauScript() {
 		return;
 	}
 	clear_methods(this, L);
+	clear_property_defaults(this, L);
 	if (class_ref != LUA_NOREF) {
 		lua_unref(L, class_ref);
 	}
@@ -1402,14 +1497,7 @@ bool LuauScript::_instance_has(Object *p_object) const {
 	return instance && (*instance)->script.ptr() == this;
 }
 
-void LuauScript::retry_pending_base() const {
-	if (!valid && pending_base != StringName() && ProjectSettings::get_singleton()->get_global_class_list().size() > 0) {
-		const_cast<LuauScript *>(this)->_reload(true);
-	}
-}
-
 bool LuauScript::_can_instantiate() const {
-	retry_pending_base();
 	// In the editor only tool scripts run; others get placeholders
 	return valid && (tool || !Engine::get_singleton()->is_editor_hint());
 }
@@ -1482,14 +1570,17 @@ static void refresh_instances(lua_State *L, LuauScript *script) {
 		lua_pop(L, 1);
 		lua_getref(L, instance->table_ref);
 		for (const LuauScript::PropertyDef &property : script->properties) {
-			if (property.has_accessors() || property.default_value.get_type() == Variant::NIL) {
+			if (property.has_accessors()) {
 				continue;
 			}
 			push_string_name(L, property.name);
 			if (lua_rawget(L, -2) == LUA_TNIL) {
-				push_string_name(L, property.name);
-				push_variant(L, property.default_value);
-				lua_rawset(L, -4);
+				Variant value = initial_value(L, property);
+				if (value.get_type() != Variant::NIL) {
+					push_string_name(L, property.name);
+					push_variant(L, value);
+					lua_rawset(L, -4);
+				}
 			}
 			lua_pop(L, 1);
 		}
@@ -1514,6 +1605,42 @@ static void reload_dependents(const String &path) {
 	}
 }
 
+void note_macro_use(const String &macro_path, const String &script_path) {
+	if (!script_path.begins_with("res://")) {
+		return;
+	}
+	dependents[macro_path].insert(script_path);
+	if (!macro_files.has(macro_path)) {
+		MacroFile file;
+		file.mtime = FileAccess::get_modified_time(macro_path);
+		file.text = FileAccess::get_file_as_string(macro_path);
+		macro_files[macro_path] = file;
+	}
+}
+
+// Compiles the users of macro files whose text changed again. `wall`: now,
+// for files changed within the modification time's resolution (0: read
+// every file).
+static void reload_macro_users(uint64_t wall) {
+	Vector<String> changed;
+	for (KeyValue<String, MacroFile> &E : macro_files) {
+		uint64_t mtime = FileAccess::get_modified_time(E.key);
+		if (wall != 0 && mtime == E.value.mtime && mtime + 2 < wall) {
+			continue;
+		}
+		E.value.mtime = mtime;
+		String text = FileAccess::get_file_as_string(E.key);
+		if (text != E.value.text) {
+			E.value.text = text;
+			changed.push_back(E.key);
+		}
+	}
+	for (const String &path : changed) {
+		UtilityFunctions::print_verbose("Luau: " + path + " changed: compiling the scripts that import it");
+		reload_dependents(path);
+	}
+}
+
 Error LuauScript::_reload(bool p_keep_state) {
 	lua_State *L = ensure_state();
 	if (L == nullptr) {
@@ -1529,7 +1656,10 @@ Error LuauScript::_reload(bool p_keep_state) {
 
 	// Run the new code first: if it fails, the loaded version stays
 	String code = source;
-	if (path.get_extension() == "fnl") {
+	if (!path.is_empty()) {
+		fennel = path.get_extension() == "fnl";
+	}
+	if (fennel) {
 		String lua;
 		if (!compile_fennel(L, source, path, lua)) {
 			report_message(lua);
@@ -1583,7 +1713,7 @@ Error LuauScript::_reload(bool p_keep_state) {
 
 	valid = false;
 	clear_methods(this, L);
-	properties.clear();
+	clear_property_defaults(this, L);
 	listed.clear();
 	property_index.clear();
 	signals.clear();
@@ -1597,82 +1727,57 @@ Error LuauScript::_reload(bool p_keep_state) {
 		table->by_atom.clear();  // instances keep their pointers
 	}
 
-	// Read first: the editor's scan registers the class even when its base
-	// isn't known yet
 	global_name = field_string(L, table, "class_name");
 	icon_path = field_string(L, table, "icon");
 	lua_rawgetfield(L, table, "tool");
 	tool = lua_toboolean(L, -1);
 	lua_pop(L, 1);
-	pending_base = StringName();
 
-	// extends: a native class name, a script's class table, or a Luau
-	// script's class_name (docs/adr/0049), required by its path
+	// extends: an engine class table (gd.Node2D) or a required script's
+	// class table (docs/adr/0034, 0056)
 	lua_rawgetfield(L, table, "extends");
-	if (lua_isstring(L, -1) && !ClassDB::class_exists(StringName(lua_tostring(L, -1)))) {
-		String name = String::utf8(lua_tostring(L, -1));
-		String base_path, language;
-		TypedArray<Dictionary> classes = ProjectSettings::get_singleton()->get_global_class_list();
-		for (int i = 0; i < classes.size(); i++) {
-			Dictionary entry = classes[i];
-			if (String(entry["class"]) == name) {
-				base_path = entry["path"];
-				language = entry["language"];
-				break;
-			}
-		}
-		if (base_path.is_empty() && Engine::get_singleton()->is_editor_hint()) {
-			// Not registered yet, or not at all: the scan registers this class
-			// with that base, and using the script loads it again
-			pending_base = StringName(name);
-			UtilityFunctions::print_verbose("Luau: '" + name + "' isn't a known class yet: " + get_path());
-			reloading_paths.erase(path);
-			lua_settop(L, table - 1);
-			return ERR_PARSE_ERROR;
-		}
-		if (base_path.is_empty() || language != "Luau") {
-			UtilityFunctions::push_error(base_path.is_empty()
-							? "'extends': no native class or class_name '" + name + "': " + get_path()
-							: "'extends': " + name + " is a " + language + " class; a Luau script extends native classes and Luau scripts: " + get_path());
-			reloading_paths.erase(path);
-			lua_settop(L, table - 1);
-			return ERR_PARSE_ERROR;
-		}
-		lua_pop(L, 1);
-		lua_getglobal(L, "require");
-		lua_pushstring(L, base_path.utf8().get_data());
-		loading.push_back(this);  // reloading the base reloads this script
-		bool required = lua_pcall(L, 1, 1, ERROR_HANDLER) == LUA_OK;
-		loading.pop_back();
-		if (!required) {
-			reloading_paths.erase(path);
-			lua_settop(L, table - 1);  // reported by the handler
-			return ERR_PARSE_ERROR;
-		}
-	}
-	if (lua_istable(L, -1)) {
-		LuauScript **base = scripts_by_class.getptr(lua_topointer(L, -1));
-		if (base == nullptr) {
-			UtilityFunctions::push_error("'extends' must be a native class name or a required script: " + get_path());
-			reloading_paths.erase(path);
-			lua_settop(L, table - 1);
-			return ERR_PARSE_ERROR;
-		}
-		base_script = Ref<LuauScript>(*base);
+	ClassInfo *native_base = class_table_info(L, -1);
+	if (native_base != nullptr) {
+		base_type = native_base->name;
+	} else if (lua_istable(L, -1) && scripts_by_class.has(lua_topointer(L, -1))) {
+		base_script = Ref<LuauScript>(scripts_by_class[lua_topointer(L, -1)]);
 		base_type = base_script->base_type;
 		// Inherited functions and fields through the class table
 		lua_newtable(L);
 		lua_pushvalue(L, -2);
 		lua_setfield(L, -2, "__index");
 		lua_setmetatable(L, table);
+	} else if (lua_isnil(L, -1)) {
+		base_type = StringName("RefCounted");
 	} else {
-		base_type = lua_isstring(L, -1) ? StringName(lua_tostring(L, -1)) : StringName("RefCounted");
+		String message = "'extends' must be an engine class (gd.Node2D) or a required script";
+		if (lua_type(L, -1) == LUA_TSTRING) {  // the old form
+			String name = String::utf8(lua_tostring(L, -1));
+			message += ClassDB::class_exists(StringName(name))
+					? ", gd." + name + ", not the string \"" + name + "\""
+					: ", require(\"res://...\"), not the string \"" + name + "\"";
+		}
+		UtilityFunctions::push_error(message + ": " + get_path());
+		reloading_paths.erase(path);
+		lua_settop(L, table - 1);
+		return ERR_PARSE_ERROR;
 	}
 	lua_pop(L, 1);
+
+	// The first bad declared type, reported once declarations are read
+	// (docs/adr/0059)
+	String type_error;
 
 	// Inherited declarations first
 	if (base_script.is_valid()) {
 		properties = base_script->properties;
+		for (PropertyDef &property : properties) {
+			if (property.default_ref != LUA_NOREF) {
+				lua_getref(L, property.default_ref);
+				property.default_ref = lua_ref(L, -1);
+				lua_pop(L, 1);
+			}
+		}
 		signals = base_script->signals;
 		constants = base_script->constants.duplicate();
 		for (const auto &[name, method] : base_script->methods) {
@@ -1747,10 +1852,12 @@ Error LuauScript::_reload(bool p_keep_state) {
 				if (MethodDef *method = methods.getptr(StringName(lua_tostring(L, -2)))) {
 					int decl = lua_gettop(L);
 					StringName ignored;
-					String ret = field_string(L, decl, "ret");
-					if (!ret.is_empty() && parse_type(ret, method->ret_type, ignored)) {
+					String what = String(method->name) + "'s ";
+					lua_rawgetfield(L, decl, "ret");
+					if (!lua_isnil(L, -1) && parse_type(L, -1, what + "result", method->ret_type, ignored, type_error)) {
 						method->has_ret_type = method->ret_type != Variant::NIL;
 					}
+					lua_pop(L, 1);
 					lua_rawgetfield(L, decl, "args");
 					if (lua_istable(L, -1)) {
 						int n = lua_objlen(L, -1);
@@ -1758,9 +1865,7 @@ Error LuauScript::_reload(bool p_keep_state) {
 						for (int i = 1; i <= n; i++) {
 							lua_rawgeti(L, -1, i);
 							Variant::Type type = Variant::NIL;
-							if (lua_isstring(L, -1)) {
-								parse_type(String::utf8(lua_tostring(L, -1)), type, ignored);
-							}
+							parse_type(L, -1, what + "argument " + itos(i), type, ignored, type_error);
 							method->arg_types.push_back(type);
 							lua_pop(L, 1);
 						}
@@ -1801,7 +1906,7 @@ Error LuauScript::_reload(bool p_keep_state) {
 			Vector<PropertyDef> declared;
 			String category, group, subgroup;
 			each_declaration(L, -1, [&](const StringName &name, int entry) {
-				PropertyDef property = parse_property(L, name, entry, pass == 0);
+				PropertyDef property = parse_property(L, name, entry, pass == 0, type_error);
 				if (property.category.is_empty() && property.group.is_empty() && property.subgroup.is_empty()) {
 					property.category = category;
 					property.group = group;
@@ -1840,6 +1945,9 @@ Error LuauScript::_reload(bool p_keep_state) {
 			for (const PropertyDef &property : declared) {
 				for (int i = 0; i < properties.size(); i++) {
 					if (properties[i].name == property.name) {
+						if (properties[i].default_ref != LUA_NOREF) {
+							lua_unref(L, properties[i].default_ref);
+						}
 						properties.remove_at(i);  // redeclared: the latest wins
 						break;
 					}
@@ -1850,7 +1958,8 @@ Error LuauScript::_reload(bool p_keep_state) {
 		lua_pop(L, 1);
 	}
 
-	// signals = { name = { "arg", "arg: type" }, … } or { "name", … }
+	// signals = { name = { "arg", "arg", gd.int, … }, … } or { "name", … }:
+	// an argument's name, then optionally its type (docs/adr/0059)
 	lua_rawgetfield(L, table, "signals");
 	if (lua_istable(L, -1)) {
 		each_declaration(L, -1, [&](const StringName &name, int entry) {
@@ -1859,17 +1968,29 @@ Error LuauScript::_reload(bool p_keep_state) {
 			int n = lua_istable(L, entry) ? lua_objlen(L, entry) : 0;
 			for (int i = 1; i <= n; i++) {
 				lua_rawgeti(L, entry, i);
-				String arg = lua_isstring(L, -1) ? String::utf8(lua_tostring(L, -1)) : String();
-				lua_pop(L, 1);
-				Variant::Type type = Variant::NIL;
-				int colon = arg.find(":");
-				if (colon >= 0) {
-					StringName ignored;
-					parse_type(arg.substr(colon + 1).strip_edges(), type, ignored);
-					arg = arg.substr(0, colon).strip_edges();
+				if (lua_type(L, -1) == LUA_TSTRING) {
+					String arg = String::utf8(lua_tostring(L, -1));
+					int colon = arg.find(":");
+					if (colon >= 0 && type_error.is_empty()) {  // the old form
+						String type = arg.substr(colon + 1).strip_edges();
+						arg = arg.substr(0, colon).strip_edges();
+						type_error = "signal " + String(name) + "'s argument \"" + arg + ": " + type + "\" is a name and a type: \"" + arg + "\", gd." + type;
+					}
+					signal.args.push_back(arg);
+					signal.arg_types.push_back(Variant::NIL);
+					signal.arg_classes.push_back(StringName());
+				} else if (signal.args.is_empty()) {
+					if (type_error.is_empty()) {
+						type_error = "signal " + String(name) + "'s arguments start with a name: { \"damage\", gd.int }";
+					}
+				} else {
+					StringName class_name;
+					Variant::Type type = Variant::NIL;
+					parse_type(L, -1, "signal " + String(name) + "'s '" + String(signal.args[signal.args.size() - 1]) + "'", type, class_name, type_error);
+					signal.arg_types.write[signal.arg_types.size() - 1] = type;
+					signal.arg_classes.write[signal.arg_classes.size() - 1] = class_name;
 				}
-				signal.args.push_back(arg);
-				signal.arg_types.push_back(type);
+				lua_pop(L, 1);
 			}
 			for (int i = 0; i < signals.size(); i++) {
 				if (signals[i].name == name) {
@@ -1938,6 +2059,13 @@ Error LuauScript::_reload(bool p_keep_state) {
 	can_revert_method = methods.getptr("_property_can_revert");
 	get_revert_method = methods.getptr("_property_get_revert");
 
+	if (!type_error.is_empty()) {
+		UtilityFunctions::push_error(type_error + ": " + get_path());
+		reloading_paths.erase(path);
+		lua_settop(L, table - 1);
+		return ERR_PARSE_ERROR;
+	}
+
 	// Register the class table (for scripts extending this one)
 	unregister_class_table(this);
 	if (class_ref != LUA_NOREF) {
@@ -1995,10 +2123,9 @@ void LuauScript::update_placeholders() {
 }
 
 void *LuauScript::_placeholder_instance_create(Object *p_for_object) const {
-	retry_pending_base();
 	LuauScript *self = const_cast<LuauScript *>(this);
 	void *placeholder = gdextension_interface::placeholder_script_instance_create(
-			LuauLanguage::get_singleton()->_owner, _owner, p_for_object->_owner);
+			_get_language()->_owner, _owner, p_for_object->_owner);
 	self->placeholders.insert(placeholder);
 	self->update_placeholders();
 	return placeholder;
@@ -2064,6 +2191,9 @@ TypedArray<Dictionary> LuauScript::_get_script_signal_list() const {
 			Dictionary arg;
 			arg["name"] = signal.args[i];
 			arg["type"] = signal.arg_types[i];
+			if (!signal.arg_classes[i].is_empty()) {
+				arg["class_name"] = signal.arg_classes[i];
+			}
 			args.push_back(arg);
 		}
 		d["args"] = args;
@@ -2097,6 +2227,9 @@ Variant LuauScript::_new(const Variant **, GDExtensionInt, GDExtensionCallError 
 }
 
 ScriptLanguage *LuauScript::_get_language() const {
+	if (fennel && FennelLanguage::get_singleton() != nullptr) {
+		return FennelLanguage::get_singleton();
+	}
 	return LuauLanguage::get_singleton();
 }
 
@@ -2109,6 +2242,7 @@ void LuauLanguage::_init() {
 void LuauLanguage::_finish() {
 	required_scripts.clear();
 	dependents.clear();
+	macro_files.clear();
 	close_state();
 }
 
@@ -2139,6 +2273,7 @@ void LuauLanguage::_reload_all_scripts() {
 	for (LuauScript *script : scripts) {
 		reload_from_disk(script);
 	}
+	reload_macro_users(0);
 }
 
 void LuauLanguage::_reload_scripts(const Array &p_scripts, bool) {
@@ -2196,6 +2331,7 @@ void LuauLanguage::_frame() {
 	for (LuauScript *script : changed) {
 		reload_from_disk(script);
 	}
+	reload_macro_users(wall);
 }
 
 PackedStringArray LuauLanguage::_get_reserved_words() const {
@@ -2204,11 +2340,81 @@ PackedStringArray LuauLanguage::_get_reserved_words() const {
 			"until", "while" });
 }
 
-Ref<Script> LuauLanguage::_make_template(const String &, const String &, const String &p_base_class_name) const {
+// The base of a new script (docs/adr/0056): an engine class, or a Luau or
+// Fennel class (r_path: its file, to require). Another language's class
+// gives the engine class under it.
+static String template_base(const String &p_base_class_name, String &r_path) {
+	String base = p_base_class_name;
+	TypedArray<Dictionary> classes = ProjectSettings::get_singleton()->get_global_class_list();
+	for (int guard = 0; guard < 64 && !ClassDB::class_exists(StringName(base)); guard++) {
+		Dictionary entry;
+		for (int i = 0; i < classes.size(); i++) {
+			if (String(Dictionary(classes[i])["class"]) == base) {
+				entry = classes[i];
+				break;
+			}
+		}
+		if (entry.is_empty()) {
+			return "Node";
+		}
+		if (String(entry["language"]) == "Luau") {
+			r_path = entry["path"];
+			return base;
+		}
+		base = entry["base"];
+	}
+	return base;
+}
+
+static String luau_template(const String &p_base_class_name) {
+	String path;
+	String base = template_base(p_base_class_name, path);
+	String head = path.is_empty() ? "" : "local " + base + " = require(\"" + path + "\")\n\n";
+	String extends = path.is_empty() ? "gd." + base : base;
+	return head + "local Script = { extends = " + extends + " }\n\nfunction Script:_ready()\nend\n\nreturn Script\n";
+}
+
+Ref<Script> LuauLanguage::_make_template(const String &, const String &p_class_name, const String &p_base_class_name) const {
 	Ref<LuauScript> script;
 	script.instantiate();
-	script->source = "local Script = { extends = \"" + p_base_class_name + "\" }\n\nfunction Script:_ready()\nend\n\nreturn Script\n";
+	script->source = luau_template(p_base_class_name);
 	return script;
+}
+
+// A defnode (docs/adr/0057) named after the file: player_ship.fnl is
+// PlayerShip
+static String fennel_template(const String &p_class_name, const String &p_base_class_name) {
+	String path;
+	String base = template_base(p_base_class_name, path);
+	String name = p_class_name.to_pascal_case();
+	if (!name.is_valid_ascii_identifier()) {
+		name = "Script";
+	}
+	String head;
+	if (!path.is_empty()) {
+		String local = base == name ? "Base" : base;
+		head = "(local " + local + " (require \"" + path + "\"))\n\n";
+		base = local;
+	} else {
+		base = "gd." + base;
+	}
+	return head + "(defnode " + name + " " + base + "\n  (method _ready []))\n";
+}
+
+Ref<Script> FennelLanguage::_make_template(const String &, const String &p_class_name, const String &p_base_class_name) const {
+	Ref<LuauScript> script;
+	script.instantiate();
+	script->fennel = true;
+	script->source = fennel_template(p_class_name, p_base_class_name);
+	return script;
+}
+
+String LuauLanguage::template_source(const String &p_extension, const String &p_class_name, const String &p_base_class_name) {
+	return p_extension == "fnl" ? fennel_template(p_class_name, p_base_class_name) : luau_template(p_base_class_name);
+}
+
+PackedStringArray FennelLanguage::_get_reserved_words() const {
+	return fennel_reserved_words();
 }
 
 // ---------------------------------------------------------------- validation (docs/adr/0047)
@@ -2252,6 +2458,15 @@ static bool error_location(const String &text, int &r_line, int &r_column, Strin
 			rest = column_end + 1;
 		}
 		r_message = text.substr(rest).strip_edges();
+		// A macro's error, re-raised at the macro call, carries its own
+		// location: the form inside the call (defnode's, docs/adr/0057)
+		int line, column = 0;
+		String inner;
+		if (r_message.begins_with("Compile error") && error_location(r_message, line, column, inner)) {
+			r_line = line;
+			r_column = column;
+			r_message = inner;
+		}
 		return true;
 	}
 	return false;
@@ -2335,6 +2550,7 @@ Dictionary LuauLanguage::_validate(const String &p_script, const String &p_path,
 
 void LuauLanguage::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("validate_script", "source", "path"), &LuauLanguage::validate_script);
+	ClassDB::bind_static_method("LuauLanguage", D_METHOD("template_source", "extension", "class_name", "base"), &LuauLanguage::template_source);
 }
 
 Object *LuauLanguage::_create_script() const {
@@ -2344,21 +2560,13 @@ Object *LuauLanguage::_create_script() const {
 Dictionary LuauLanguage::_get_global_class_name(const String &p_path) const {
 	Dictionary result;
 	Ref<LuauScript> script = ResourceLoader::get_singleton()->load(p_path);
-	if (script.is_valid()) {
-		script->retry_pending_base();
-	}
-	bool pending = script.is_valid() && script->pending_base != StringName();
-	if (script.is_null() || (!script->valid && !pending) || script->global_name.is_empty()) {
+	if (script.is_null() || !script->valid || script->global_name.is_empty()) {
 		return result;
 	}
 	result["name"] = script->global_name;
-	if (pending) {
-		result["base_type"] = script->pending_base;  // registered before its base (docs/adr/0049)
-	} else {
-		result["base_type"] = script->base_script.is_valid() && !script->base_script->global_name.is_empty()
-				? script->base_script->global_name
-				: script->base_type;
-	}
+	result["base_type"] = script->base_script.is_valid() && !script->base_script->global_name.is_empty()
+			? script->base_script->global_name
+			: script->base_type;
 	result["icon_path"] = script->icon_path;
 	result["is_abstract"] = false;
 	result["is_tool"] = script->tool;

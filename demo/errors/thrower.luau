@@ -1,7 +1,7 @@
 local Thrower = {
-	extends = "Node",
+	extends = gd.Node,
 	signals = { "go" },
-	properties = { broken = { type = "int", get = "get_broken" } },
+	properties = { broken = { type = gd.int, get = "get_broken" } },
 }
 
 local function deepest(t)

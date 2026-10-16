@@ -1,4 +1,4 @@
-(local T {:extends "Node"})
+(local T {:extends gd.Node})
 
 (fn T.boom [self]
   (let [t {}]

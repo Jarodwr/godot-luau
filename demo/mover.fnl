@@ -1,10 +1,9 @@
-;; Per-frame work for the process_nodes case, in Fennel on Luau
-(local Mover {:extends "Node2D"})
+;; Moves its node; fennel_smoke.gd checks the position (defnode: ADR 0057)
+(defnode Mover gd.Node2D
+  :global false
 
-(fn Mover._ready [self]
-  (set self.velocity (Vector2 1 0.5)))
+  (method _ready []
+    (set self.velocity (gd.Vector2 1 0.5)))
 
-(fn Mover._process [self delta]
-  (set self.position (+ self.position (* self.velocity delta))))
-
-Mover
+  (method _process [delta]
+    (set self.position (+ self.position (* self.velocity delta)))))

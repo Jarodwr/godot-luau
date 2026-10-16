@@ -1,5 +1,5 @@
 -- Answers a property that doesn't exist through _get
-local Dynamic = { extends = "Node" }
+local Dynamic = { extends = gd.Node }
 
 function Dynamic:_get(property)
 	if property == "virtual_value" then return 7 end

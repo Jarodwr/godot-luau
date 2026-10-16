@@ -13,6 +13,10 @@ namespace luau {
 
 using namespace godot;
 
+// Fennel's special forms, godot-luau's macros and literals: FennelLanguage's
+// reserved words
+PackedStringArray fennel_reserved_words();
+
 class LuauHighlighter : public EditorSyntaxHighlighter {
 	GDCLASS(LuauHighlighter, EditorSyntaxHighlighter);
 
@@ -27,7 +31,7 @@ public:
 	enum Mode : uint8_t { UNKNOWN, LUAU, FENNEL };
 
 	String _get_name() const override { return "Luau"; }
-	PackedStringArray _get_supported_languages() const override { return PackedStringArray({ "Luau" }); }
+	PackedStringArray _get_supported_languages() const override { return PackedStringArray({ "Luau", "Fennel" }); }
 	Ref<EditorSyntaxHighlighter> _create() const override;
 	Dictionary _get_line_syntax_highlighting(int32_t p_line) const override;
 	void _clear_highlighting_cache() override;

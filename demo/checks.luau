@@ -1,12 +1,18 @@
-local Checks = { extends = "Node" }
+local Checks = { extends = gd.Node }
 
 function Checks:keep(node) self.kept = node end
 function Checks:use_kept() return self.kept:get_name() end
-function Checks:make_ref() self.ref = RefCounted.new(); return self.ref:get_reference_count() end
+function Checks:make_ref() self.ref = gd.RefCounted.new(); return self.ref:get_reference_count() end
 function Checks:use_ref() return self.ref:get_reference_count() end
-function Checks:frames() return Engine:get_physics_ticks_per_second() end
+function Checks:frames() return gd.Engine:get_physics_ticks_per_second() end
 function Checks:keep_self_of(other) self.other = other end
 function Checks:use_other() return self.other.name end
+function Checks:kept_valid() return gd.is_instance_valid(self.kept) end
+function Checks:other_valid() return gd.is_instance_valid(self.other) end
+function Checks:valid_misc()
+	return gd.is_instance_valid(nil) == false and gd.is_instance_valid(1) == false
+		and gd.is_instance_valid(gd.RefCounted.new()) and gd.is_instance_valid(gd.Engine)
+end
 
 function Checks:dict_write(d) d["x"] = 5; d[1] = "y"; return d["x"] end
 function Checks:array_write(a) a[0] = 10; return a[0] + a[1] end
@@ -16,36 +22,36 @@ function Checks:echo(value) return value end
 
 -- Vector2 and Vector3 as separate Luau types (ADR 0044)
 function Checks:vector_kind_checks()
-	local mat = ShaderMaterial.new()
-	local shader = Shader.new()
+	local mat = gd.ShaderMaterial.new()
+	local shader = gd.Shader.new()
 	shader.code = "shader_type spatial; uniform vec3 dir;"
 	mat.shader = shader
-	mat:set_shader_parameter("dir", Vector3.UP)
+	mat:set_shader_parameter("dir", gd.Vector3.UP)
 	self.kind_mat = mat
-	self:set_meta("v3", Vector3(1, 2, 0))
-	self:set_meta("v2", Vector2(1, 2) * 2)
-	local arr = Array({ Vector3(4, 5, 0) })
+	self:set_meta("v3", gd.Vector3(1, 2, 0))
+	self:set_meta("v2", gd.Vector2(1, 2) * 2)
+	local arr = gd.Array({ gd.Vector3(4, 5, 0) })
 	local back = arr[0]                -- a Vector3 with z = 0 read back from Godot
-	local again = Array({ back })      -- and written again
+	local again = gd.Array({ back })      -- and written again
 	local keys = {}
-	keys[Vector2(1, 2)] = "2d"
-	keys[Vector3(1, 2, 0)] = "3d"
-	local basis = Basis(Vector3.UP, 0.5)
-	local t = Transform3D(basis, Vector3(1, 2, 3))
+	keys[gd.Vector2(1, 2)] = "2d"
+	keys[gd.Vector3(1, 2, 0)] = "3d"
+	local basis = gd.Basis(gd.Vector3.UP, 0.5)
+	local t = gd.Transform3D(basis, gd.Vector3(1, 2, 3))
 	return {
 		roundtrip = again,
-		v2_math = Vector2(1, 2) + Vector2(3, 4) * 0.5,
-		v3_math = Vector3(1, 2, 0) * 2,
-		mixed_eq = Vector2(0, 1) ~= Vector3(0, 1, 0) and Vector3.UP == Vector3(0, 1, 0),
-		keys = keys[Vector2(1, 2)] == "2d" and keys[Vector3(1, 2, 0)] == "3d",
-		cross2 = Vector2(1, 0):cross(Vector2(0, 1)),
-		cross3 = Vector3(1, 0, 0):cross(Vector3(0, 1, 0)),
-		rotated2 = Vector2(1, 0):rotated(math.pi / 2),
-		rotated3 = Vector3(1, 0, 0):rotated(Vector3.UP, math.pi / 2),
-		xform = t * Vector3(1, 0, 0),
+		v2_math = gd.Vector2(1, 2) + gd.Vector2(3, 4) * 0.5,
+		v3_math = gd.Vector3(1, 2, 0) * 2,
+		mixed_eq = gd.Vector2(0, 1) ~= gd.Vector3(0, 1, 0) and gd.Vector3.UP == gd.Vector3(0, 1, 0),
+		keys = keys[gd.Vector2(1, 2)] == "2d" and keys[gd.Vector3(1, 2, 0)] == "3d",
+		cross2 = gd.Vector2(1, 0):cross(gd.Vector2(0, 1)),
+		cross3 = gd.Vector3(1, 0, 0):cross(gd.Vector3(0, 1, 0)),
+		rotated2 = gd.Vector2(1, 0):rotated(math.pi / 2),
+		rotated3 = gd.Vector3(1, 0, 0):rotated(gd.Vector3.UP, math.pi / 2),
+		xform = t * gd.Vector3(1, 0, 0),
 		basis_ok = basis ~= nil,
-		normalized2 = Vector2(3, 4):normalized(),
-		v2_z = Vector2(1, 2).z,
+		normalized2 = gd.Vector2(3, 4):normalized(),
+		v2_z = gd.Vector2(1, 2).z,
 	}
 end
 
@@ -55,29 +61,29 @@ function Checks:strict_vector_checks()
 		local ok, message = pcall(f)
 		return if ok then "no error" else tostring(message)
 	end
-	local n3 = Node3D.new()
-	local n2 = Node2D.new()
+	local n3 = gd.Node3D.new()
+	local n2 = gd.Node2D.new()
 	local result = {
-		ctor2_3 = err(function() return Vector2(1, 2, 3) end),
+		ctor2_3 = err(function() return gd.Vector2(1, 2, 3) end),
 		-- two arguments in the source that expand to three at run time
 		ctor2_call = err(function()
 			local function rest() return 2, 3 end
-			return Vector2(1, rest())
+			return gd.Vector2(1, rest())
 		end),
 		ctor2_varargs = err(function()
-			local function spread(...) return Vector2(1, ...) end
+			local function spread(...) return gd.Vector2(1, ...) end
 			return spread(2, 3)
 		end),
-		ctor3_2 = err(function() return Vector3(1, 2) end),
-		ctor2_empty = Vector2(),
-		ctor2_from_i = Vector2(Vector2i(1, 2)),
-		ctor3_from_i = Vector3(Vector3i(1, 2, 3)),
-		prop3 = err(function() n3.position = Vector2(1, 2) end),
-		prop2 = err(function() n2.position = Vector3(1, 2, 3) end),
-		arg3 = err(function() n3:translate(Vector2(1, 2)) end),
-		arg2_ok = err(function() n2:translate(Vector2(1, 2)) end),
-		builtin_arg = err(function() return Rect2i(0, 0, 9, 9):has_point(Vector3(1, 1, 1)) end),
-		builtin_arg_ok = Rect2i(0, 0, 9, 9):has_point(Vector2(1, 1)),
+		ctor3_2 = err(function() return gd.Vector3(1, 2) end),
+		ctor2_empty = gd.Vector2(),
+		ctor2_from_i = gd.Vector2(gd.Vector2i(1, 2)),
+		ctor3_from_i = gd.Vector3(gd.Vector3i(1, 2, 3)),
+		prop3 = err(function() n3.position = gd.Vector2(1, 2) end),
+		prop2 = err(function() n2.position = gd.Vector3(1, 2, 3) end),
+		arg3 = err(function() n3:translate(gd.Vector2(1, 2)) end),
+		arg2_ok = err(function() n2:translate(gd.Vector2(1, 2)) end),
+		builtin_arg = err(function() return gd.Rect2i(0, 0, 9, 9):has_point(gd.Vector3(1, 1, 1)) end),
+		builtin_arg_ok = gd.Rect2i(0, 0, 9, 9):has_point(gd.Vector2(1, 1)),
 	}
 	n3:free()
 	n2:free()
@@ -86,33 +92,33 @@ end
 
 -- Opaque 64-bit ints (ADR 0043)
 function Checks:int64_checks()
-	local r = RefCounted.new()
+	local r = gd.RefCounted.new()
 	local id = r:get_instance_id()  -- RefCounted ids have bit 63 set: beyond 2^53
-	local r2 = RefCounted.new()
+	local r2 = gd.RefCounted.new()
 	local id2 = r2:get_instance_id()
 	local t = {}
 	t[id] = "x"
-	local rng = RandomNumberGenerator.new()
+	local rng = gd.RandomNumberGenerator.new()
 	rng.seed = 12345
 	rng:randi()
 	local state = rng.state
 	local first = rng:randi()
 	rng.state = state
-	local arr = PackedInt64Array()
+	local arr = gd.PackedInt64Array()
 	arr:append(id)
-	local d = Dictionary()
+	local d = gd.Dictionary()
 	d[id] = id
 	self:set_meta("big_id", id)
 	return {
 		opaque = typeof(id) == "int64",
-		roundtrip = instance_from_id(id) == r,
+		roundtrip = gd.instance_from_id(id) == r,
 		equal = id == r:get_instance_id() and id ~= id2,
 		key = t[r:get_instance_id()] == "x",
 		order = ((id < id2) ~= (id2 < id)) and id <= id and not (id < id),
 		less = id < id2,
 		text = tostring(id),
 		concat = "id " .. id,
-		format = string.format("%s|%5s|%*|%d%%", id, "ab", Vector2i(1, 2), 7),
+		format = string.format("%s|%5s|%*|%d%%", id, "ab", gd.Vector2i(1, 2), 7),
 		arith_error = not pcall(function() return id + 1 end),
 		mixed_compare_error = not pcall(function() return id < 5 end),
 		small_is_number = type(self:get_instance_id()) == "number",
@@ -130,12 +136,12 @@ function Checks:tables()
 	local holes = { 1, 2 }
 	holes[4] = 4                                   -- not a sequence
 	return {
-		Array({ 1, 2.5, "s", true, Vector2(1, 2), Vector3(1, 2, 3) }),
-		Array({ { 1, 2 }, { a = 1 } }),
-		Array(backwards),
-		Dictionary(holes),
-		Array({}),
-		Dictionary({ 1, 2, x = 3 }),
+		gd.Array({ 1, 2.5, "s", true, gd.Vector2(1, 2), gd.Vector3(1, 2, 3) }),
+		gd.Array({ { 1, 2 }, { a = 1 } }),
+		gd.Array(backwards),
+		gd.Dictionary(holes),
+		gd.Array({}),
+		gd.Dictionary({ 1, 2, x = 3 }),
 		{ "héllo ✓", { nested = { 1, { 2 } } } },
 	}
 end
@@ -146,89 +152,89 @@ function Checks:lua_length(s) return #s end
 function Checks:api_checks()
 	local results = {}
 	local function check(name, ok) results[name] = ok == true end
-	local c = Color(1, 0.5, 0)
+	local c = gd.Color(1, 0.5, 0)
 	check("Color ctor", c.g == 0.5)
-	check("Rect2 method", Rect2(0, 0, 10, 10):has_point(Vector2(5, 5)))
-	local a = Vector2i(1, 2) + Vector2i(3, 4)
+	check("Rect2 method", gd.Rect2(0, 0, 10, 10):has_point(gd.Vector2(5, 5)))
+	local a = gd.Vector2i(1, 2) + gd.Vector2i(3, 4)
 	check("Vector2i maths", a.x == 4 and a.y == 6)
-	check("Transform2D xform", math.abs((Transform2D(0, Vector2(10, 20)) * Vector2(1, 0)).x - 11) < 1e-5)
-	check("constant", Vector2.ZERO == Vector2(0, 0) and Color.RED == Color(1, 0, 0))
-	check("builtin enum", Vector2.AXIS_Y == 1)
-	check("static method", math.abs(Vector2.from_angle(0).x - 1) < 1e-6)
-	check("method via type", Vector2.dot(Vector2(1, 2), Vector2(3, 4)) == 11)
-	local v = Vector2(3, 4)
-	check("vector fast methods", v:length() == 5 and math.abs(v:normalized().x - 0.6) < 1e-6 and v:dot(Vector2(1, 0)) == 3)
-	check("vector generic 2D", math.abs(Vector2(0, 1):angle() - math.pi / 2) < 1e-6)
-	local cr = Vector3(1, 0, 0):cross(Vector3(0, 1, 0))
+	check("Transform2D xform", math.abs((gd.Transform2D(0, gd.Vector2(10, 20)) * gd.Vector2(1, 0)).x - 11) < 1e-5)
+	check("constant", gd.Vector2.ZERO == gd.Vector2(0, 0) and gd.Color.RED == gd.Color(1, 0, 0))
+	check("builtin enum", gd.Vector2.AXIS_Y == 1)
+	check("static method", math.abs(gd.Vector2.from_angle(0).x - 1) < 1e-6)
+	check("method via type", gd.Vector2.dot(gd.Vector2(1, 2), gd.Vector2(3, 4)) == 11)
+	local v = gd.Vector2(3, 4)
+	check("vector fast methods", v:length() == 5 and math.abs(v:normalized().x - 0.6) < 1e-6 and v:dot(gd.Vector2(1, 0)) == 3)
+	check("vector generic 2D", math.abs(gd.Vector2(0, 1):angle() - math.pi / 2) < 1e-6)
+	local cr = gd.Vector3(1, 0, 0):cross(gd.Vector3(0, 1, 0))
 	check("vector generic 3D", cr.z == 1)
 	check("String method on Lua string", ("hello"):to_upper() == "HELLO" and ("hello world"):begins_with("hello"))
 	check("Lua string library wins", string.format("%d", 5) == "5")
-	check("utility", clampf(15, 0, 10) == 10 and math.abs(deg_to_rad(180) - math.pi) < 1e-9)
-	check("vararg utility", max(1, 7, 3) == 7)
-	check("global enum", KEY_SPACE == 32)
-	check("class constant", Node.NOTIFICATION_READY == 13)
-	local arr = Array({ 10, 20, 30 })
+	check("utility", gd.clampf(15, 0, 10) == 10 and math.abs(gd.deg_to_rad(180) - math.pi) < 1e-9)
+	check("vararg utility", gd.max(1, 7, 3) == 7)
+	check("global enum", gd.KEY_SPACE == 32)
+	check("class constant", gd.Node.NOTIFICATION_READY == 13)
+	local arr = gd.Array({ 10, 20, 30 })
 	local sum, firsti = 0, nil
 	for i, x in arr do sum += x; firsti = firsti or i end
 	check("Array from table, iteration, 0-based", sum == 60 and firsti == 0 and #arr == 3)
-	local d = Dictionary({ a = 1, b = 2 })
+	local d = gd.Dictionary({ a = 1, b = 2 })
 	local dsum = 0
 	for k, x in d do dsum += x end
 	check("Dictionary from table, iteration", dsum == 3 and #d == 2)
-	check("table to engine argument", PackedStringArray({ "x", "y" }):size() == 2)
-	check("value types are immutable", not pcall(function() local col = Color(1, 1, 1); col.r = 0 end))
-	check("Color.RED unchanged", Color.RED.r == 1)
+	check("table to engine argument", gd.PackedStringArray({ "x", "y" }):size() == 2)
+	check("value types are immutable", not pcall(function() local col = gd.Color(1, 1, 1); col.r = 0 end))
+	check("Color.RED unchanged", gd.Color.RED.r == 1)
 	-- Cached builtin method pointers (ADR 0029)
-	local arr2 = Array()
+	local arr2 = gd.Array()
 	arr2:append(5); arr2:append(7)
 	check("Array.append mutates the held array", arr2:size() == 2 and arr2[1] == 7)
 	local held = { arr = arr2 }
 	held.arr:append(9)
 	check("same Array through another reference", arr2:size() == 3)
-	local d2 = Dictionary()
+	local d2 = gd.Dictionary()
 	d2[1] = "a"
 	check("Dictionary methods", d2:has(1) and not d2:has(2) and d2:size() == 1)
-	local grown = Rect2(0, 0, 10, 10):grow(1)
+	local grown = gd.Rect2(0, 0, 10, 10):grow(1)
 	check("method returning an inline type", grown.size.x == 12 and grown.position.x == -1)
-	check("Color method", Color(0.5, 0.5, 0.5):lightened(1).r == 1)
-	local t2 = Transform2D(0, Vector2(10, 20))
-	check("heap-type receiver", t2:basis_xform(Vector2(1, 0)).x == 1 and t2:get_origin().y == 20)
-	check("method returning a heap type", t2:translated(Vector2(1, 1)):get_origin().x == 11)
-	check("Vector2i method", Vector2i(-3, 4):abs().x == 3)
-	local pf = PackedFloat32Array()
+	check("Color method", gd.Color(0.5, 0.5, 0.5):lightened(1).r == 1)
+	local t2 = gd.Transform2D(0, gd.Vector2(10, 20))
+	check("heap-type receiver", t2:basis_xform(gd.Vector2(1, 0)).x == 1 and t2:get_origin().y == 20)
+	check("method returning a heap type", t2:translated(gd.Vector2(1, 1)):get_origin().x == 11)
+	check("Vector2i method", gd.Vector2i(-3, 4):abs().x == 3)
+	local pf = gd.PackedFloat32Array()
 	pf:append(1.5); pf:append(2.5)
 	local same = pf
 	same:append(3.5)
 	check("PackedFloat32Array append/size through references", pf:size() == 3 and pf[2] == 3.5 and #pf == 3)
-	local ps = PackedStringArray({ "a", "b" })
+	local ps = gd.PackedStringArray({ "a", "b" })
 	check("PackedStringArray methods", ps:has("b") and ps:find("b") == 1)
 	-- Direct constructors match the engine's
-	check("Color(r, g, b) has alpha 1", Color(0.5, 0.25, 1).a == 1 and Color(0.5, 0.25, 1, 0.5).a == 0.5)
-	check("Rect2 from numbers", Rect2(1, 2, 3, 4).size == Vector2(3, 4))
-	check("Rect2i/Vector3i/Vector4 from numbers", Rect2i(1, 2, 3, 4).position == Vector2i(1, 2)
-		and Vector3i(1, 2, 3).z == 3 and Vector4(1, 2, 3, 4).w == 4)
-	check("Vector2i truncates floats", Vector2i(1.9, -1.9) == Vector2i(1, -1))
-	check("Quaternion/Plane from numbers", Quaternion(0, 0, 0, 1).w == 1 and Plane(0, 1, 0, 5).d == 5)
+	check("Color(r, g, b) has alpha 1", gd.Color(0.5, 0.25, 1).a == 1 and gd.Color(0.5, 0.25, 1, 0.5).a == 0.5)
+	check("Rect2 from numbers", gd.Rect2(1, 2, 3, 4).size == gd.Vector2(3, 4))
+	check("Rect2i/Vector3i/Vector4 from numbers", gd.Rect2i(1, 2, 3, 4).position == gd.Vector2i(1, 2)
+		and gd.Vector3i(1, 2, 3).z == 3 and gd.Vector4(1, 2, 3, 4).w == 4)
+	check("Vector2i truncates floats", gd.Vector2i(1.9, -1.9) == gd.Vector2i(1, -1))
+	check("Quaternion/Plane from numbers", gd.Quaternion(0, 0, 0, 1).w == 1 and gd.Plane(0, 1, 0, 5).d == 5)
 	-- Packed values (ADR 0030)
-	local vi = Vector2i(3, -4)
+	local vi = gd.Vector2i(3, -4)
 	check("Vector2i fields", vi.x == 3 and vi.y == -4)
-	check("Vector2i maths", (vi + Vector2i(1, 1)) == Vector2i(4, -3) and (vi * 2).y == -8)
-	check("Vector2i maths, more", (vi - Vector2i(1, 1)) == Vector2i(2, -5) and (2 * vi).x == 6
-		and (vi * Vector2i(2, 3)) == Vector2i(6, -12) and (Vector2i(7, 9) / Vector2i(2, 2)) == Vector2i(3, 4))
-	check("Vector2i * float is a Vector2", math.abs((Vector2i(1, 2) * 0.5).x - 0.5) < 1e-6)
-	check("Vector2i equality is by value", Vector2i(1, 2) == Vector2i(1, 2) and Vector2i(1, 2) ~= Vector2i(2, 1))
+	check("Vector2i maths", (vi + gd.Vector2i(1, 1)) == gd.Vector2i(4, -3) and (vi * 2).y == -8)
+	check("Vector2i maths, more", (vi - gd.Vector2i(1, 1)) == gd.Vector2i(2, -5) and (2 * vi).x == 6
+		and (vi * gd.Vector2i(2, 3)) == gd.Vector2i(6, -12) and (gd.Vector2i(7, 9) / gd.Vector2i(2, 2)) == gd.Vector2i(3, 4))
+	check("Vector2i * float is a Vector2", math.abs((gd.Vector2i(1, 2) * 0.5).x - 0.5) < 1e-6)
+	check("Vector2i equality is by value", gd.Vector2i(1, 2) == gd.Vector2i(1, 2) and gd.Vector2i(1, 2) ~= gd.Vector2i(2, 1))
 	local grid = {}
-	grid[Vector2i(5, 6)] = "cell"
-	check("Vector2i as a table key", grid[Vector2i(5, 6)] == "cell")
-	check("Vector2i methods", vi:abs() == Vector2i(3, 4) and vi:length() == 5)
-	check("Vector2i constant", Vector2i.ONE == Vector2i(1, 1))
-	check("Vector2i ordering", Vector2i(1, 2) < Vector2i(1, 3))
-	check("Vector2i through an Array", Array({ Vector2i(7, 8) })[0] == Vector2i(7, 8))
-	check("Vector2i into Rect2i", Rect2i(Vector2i(1, 2), Vector2i(3, 4)).size == Vector2i(3, 4))
-	check("Vector2i tostring", tostring(Vector2i(1, 2)) == "(1, 2)")
-	local rid = RID()
-	check("RID", rid:get_id() == 0 and not rid:is_valid() and rid == RID())
-	check("method with a default argument, fewer args", Dictionary({ a = 1 }):get("zz") == nil)
+	grid[gd.Vector2i(5, 6)] = "cell"
+	check("Vector2i as a table key", grid[gd.Vector2i(5, 6)] == "cell")
+	check("Vector2i methods", vi:abs() == gd.Vector2i(3, 4) and vi:length() == 5)
+	check("Vector2i constant", gd.Vector2i.ONE == gd.Vector2i(1, 1))
+	check("Vector2i ordering", gd.Vector2i(1, 2) < gd.Vector2i(1, 3))
+	check("Vector2i through an Array", gd.Array({ gd.Vector2i(7, 8) })[0] == gd.Vector2i(7, 8))
+	check("Vector2i into Rect2i", gd.Rect2i(gd.Vector2i(1, 2), gd.Vector2i(3, 4)).size == gd.Vector2i(3, 4))
+	check("Vector2i tostring", tostring(gd.Vector2i(1, 2)) == "(1, 2)")
+	local rid = gd.RID()
+	check("RID", rid:get_id() == 0 and not rid:is_valid() and rid == gd.RID())
+	check("method with a default argument, fewer args", gd.Dictionary({ a = 1 }):get("zz") == nil)
 	return results
 end
 
@@ -239,16 +245,16 @@ end
 
 -- Elementwise operators on builtin values (compared with Godot's in checks.gd)
 function Checks:elementwise_ops()
-	local c1, c2 = Color(0.1, 0.2, 0.3, 0.4), Color(0.7, 0.11, 0.13, 0.17)
-	local v1, v2 = Vector4(1.1, 2.2, 3.3, 4.4), Vector4(0.3, 0.7, 1.9, 2.3)
-	local q1, q2 = Quaternion(0.1, 0.2, 0.3, 0.9), Quaternion(0.4, 0.3, 0.2, 0.1)
-	local i1, i2 = Vector3i(3, -4, 5), Vector3i(7, 8, -9)
-	local j1, j2 = Vector4i(1, 2, 3, 4), Vector4i(-5, 6, 7, 8)
+	local c1, c2 = gd.Color(0.1, 0.2, 0.3, 0.4), gd.Color(0.7, 0.11, 0.13, 0.17)
+	local v1, v2 = gd.Vector4(1.1, 2.2, 3.3, 4.4), gd.Vector4(0.3, 0.7, 1.9, 2.3)
+	local q1, q2 = gd.Quaternion(0.1, 0.2, 0.3, 0.9), gd.Quaternion(0.4, 0.3, 0.2, 0.1)
+	local i1, i2 = gd.Vector3i(3, -4, 5), gd.Vector3i(7, 8, -9)
+	local j1, j2 = gd.Vector4i(1, 2, 3, 4), gd.Vector4i(-5, 6, 7, 8)
 	return {
 		c1 + c2, c1 - c2, c1 * c2, c1 / c2, c1 * 0.3, 0.3 * c1, c1 / 0.3, c1 * 2,
 		v1 + v2, v1 - v2, v1 * v2, v1 / v2, v1 * 0.3, 0.3 * v1, v1 / 0.3,
 		q1 + q2, q1 - q2, q1 * 0.3, 0.3 * q1, q1 / 0.3, q1 * q2,
-		i1 + i2, i1 - i2, i1 * i2, i1 * 3, 3 * i1, i1 / Vector3i(2, 2, 2), i1 * 1.5,
+		i1 + i2, i1 - i2, i1 * i2, i1 * 3, 3 * i1, i1 / gd.Vector3i(2, 2, 2), i1 * 1.5,
 		j1 + j2, j1 - j2, j1 * j2, j1 * -2,
 	}
 end
@@ -256,10 +262,10 @@ end
 -- Objects made with ClassName.new() get NOTIFICATION_POSTINITIALIZE: a Label
 -- lays itself out with its theme (crashed before)
 function Checks:new_control_checks()
-	local label = Label.new()
+	local label = gd.Label.new()
 	label.text = "hello"
-	label.position = Vector2(16, 12)
-	label:set_position(Vector2(4, 5))
+	label.position = gd.Vector2(16, 12)
+	label:set_position(gd.Vector2(4, 5))
 	local size = label:get_minimum_size()
 	local font = label:get_theme_font("font")
 	label:free()
@@ -282,15 +288,16 @@ function Checks:frozen_checks()
 		function() math.floor = nil end,
 		function() string.upper = nil end,
 		function() getmetatable("").__index = {} end,
-		function() Color.RED = 1 end,
-		function() getmetatable(Color).__call = nil end,
-		function() getmetatable(Color(1, 0, 0)).__index = nil end,
-		function() getmetatable(Vector2(1, 2)).__index.length = nil end,
-		function() getmetatable(Vector3(1, 2, 3)).__index = nil end,
-		function() getmetatable(Vector2i(1, 2)).__index = nil end,
-		function() getmetatable(Engine).__index = nil end, -- Objects
-		function() getmetatable(_G).__index = nil end,
-		function() Timer.foo = 1 end, -- an engine class looked up after startup
+		function() gd.Color.RED = 1 end,
+		function() getmetatable(gd.Color).__call = nil end,
+		function() getmetatable(gd.Color(1, 0, 0)).__index = nil end,
+		function() getmetatable(gd.Vector2(1, 2)).__index.length = nil end,
+		function() getmetatable(gd.Vector3(1, 2, 3)).__index = nil end,
+		function() getmetatable(gd.Vector2i(1, 2)).__index = nil end,
+		function() getmetatable(gd.Engine).__index = nil end, -- Objects
+		function() getmetatable(gd).__index = nil end,
+		function() gd.Vector2 = nil end, -- gd itself
+		function() gd.Timer.foo = 1 end, -- an engine class looked up after startup
 		function() setmetatable(math, {}) end,
 	}
 	local count = 0
@@ -305,10 +312,19 @@ function Checks:frozen_checks()
 		blocked = count,
 		writes = #writes,
 		own_global = frozen_check_global == 1,
+		unknown = select(2, pcall(function() return gd.Nod2D end)),
+		unknown_key = select(2, pcall(function() return gd[1] end)),
 		package_loaded = package.loaded.frozen_check == true,
-		cached = Color.RED == Color.RED and Node.NOTIFICATION_READY == 13 and Vector2(3, 4):length() == 5
-			and Vector2(3, 4):length() == 5 and ("ab"):to_upper() == "AB" and ("ab"):to_upper() == "AB",
+		cached = gd.Color.RED == gd.Color.RED and gd.Node.NOTIFICATION_READY == 13 and gd.Vector2(3, 4):length() == 5
+			and gd.Vector2(3, 4):length() == 5 and ("ab"):to_upper() == "AB" and ("ab"):to_upper() == "AB",
 	}
+end
+
+-- gd.int, gd.float, gd.bool and gd.String: types (ADR 0059) that also
+-- convert, with Godot's constructors
+function Checks:conversion_checks()
+	return gd.int("12") == 12 and gd.int(2.7) == 2 and gd.float(3) == 3.0
+		and gd.String(gd.NodePath("a/b")) == "a/b" and gd.bool(1) == true
 end
 
 return Checks

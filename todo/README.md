@@ -25,7 +25,6 @@ static functions and the remaining overrides ([ADR 0039](../docs/adr/0039-static
 
 ## Editor and tooling
 
-- [Editor: new-script templates](editor-templates.md)
 - [Editor: code completion](code-completion.md)
 - [Debugger and profiler integration](debugger.md)
 - [Fennel tooling parity](fennel-tooling.md)

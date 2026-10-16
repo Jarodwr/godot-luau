@@ -26,6 +26,10 @@ bool call_validated_operator(lua_State *L, int op);
 
 // Pushes the table for an engine class: `new` and its constants
 void push_class_table(lua_State *L, ClassInfo *cls);
+ClassInfo *class_table_info(lua_State *L, int index);
+// The type of a built-in type table (gd.Vector2, gd.int); false if the value
+// isn't one
+bool builtin_type_table(lua_State *L, int index, Variant::Type &r_type);
 
 // to_variant that also converts plain Lua tables: a sequence to an Array,
 // anything else to a Dictionary (docs/adr/0027)

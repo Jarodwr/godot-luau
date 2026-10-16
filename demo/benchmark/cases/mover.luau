@@ -1,8 +1,8 @@
 -- Per-frame work for the process_nodes case; twin of mover.gd.
-local Mover = { extends = "Node2D" }
+local Mover = { extends = gd.Node2D }
 
 function Mover:_ready()
-	self.velocity = Vector2(1, 0.5)
+	self.velocity = gd.Vector2(1, 0.5)
 end
 
 function Mover:_process(delta)
