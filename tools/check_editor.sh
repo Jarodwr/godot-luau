@@ -19,6 +19,7 @@ expect() {  # expect OUTPUT TEXT
 reject() {  # reject OUTPUT TEXT
 	if printf '%s\n' "$1" | grep -qF -- "$2"; then
 		echo "FAIL unexpected: $2"
+		printf '%s\n' "$1" | grep -F -A4 -- "$2" | sed 's/^/     | /'
 		failures=$((failures + 1))
 	else
 		echo "ok   not printed: $2"
