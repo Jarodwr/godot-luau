@@ -1,15 +1,15 @@
 -- Luau twin of gdscript_bench.gd for the cases godot-luau supports. Same
 -- method names; bench_* methods return a checksum compared with GDScript's.
 local Bench = {
-	extends = "Node2D",
+	extends = gd.Node2D,
 
 	-- Script declarations (docs/adr/0032-script-declarations.md)
 	exports = {
-		speed = { type = "float", default = 2.0 },
+		speed = { type = gd.float, default = 2.0 },
 	},
 	properties = {
-		armor = { type = "int", default = 0, set = "set_armor", get = "get_armor" },
-		notified = { type = "int", default = 0 },
+		armor = { type = gd.int, default = 0, set = "set_armor", get = "get_armor" },
+		notified = { type = gd.int, default = 0 },
 	},
 	signals = {
 		ticked = { "value" },
@@ -19,7 +19,7 @@ local Bench = {
 		greet = { "world" },
 	},
 	types = {
-		typed_add = { args = { "int", "float" }, ret = "float" },
+		typed_add = { args = { gd.int, gd.float }, ret = gd.float },
 	},
 }
 
@@ -36,7 +36,7 @@ local function add(a, b)
 end
 
 function Bench:_ready()
-	self.ticked:connect(Callable(self, "on_ticked"))
+	self.ticked:connect(gd.Callable(self, "on_ticked"))
 end
 
 function Bench:helper(x) return x + 1 end
@@ -60,14 +60,14 @@ function Bench:bench_vm_function_calls(n)
 end
 
 function Bench:bench_api_vector2_math(n)
-	local v = Vector2(0, 0)
-	local step = Vector2(1, 1)
+	local v = gd.Vector2(0, 0)
+	local step = gd.Vector2(1, 1)
 	for i = 1, n do v = v + step * 0.5 end
 	return v.x
 end
 
 function Bench:bench_api_vector2_field(n)
-	local v = Vector2(3, 4)
+	local v = gd.Vector2(3, 4)
 	local s = 0.0
 	for i = 1, n do s += v.x end
 	return s
@@ -86,7 +86,7 @@ function Bench:bench_api_object_prop_get(n)
 end
 
 function Bench:bench_api_object_prop_set(n)
-	local v = Vector2(1, 2)
+	local v = gd.Vector2(1, 2)
 	for i = 1, n do self.position = v end
 	return self.position.x
 end
@@ -99,7 +99,7 @@ end
 
 function Bench:bench_api_singleton_call(n)
 	local s = 0
-	for i = 1, n do s += Engine:get_physics_ticks_per_second() end
+	for i = 1, n do s += gd.Engine:get_physics_ticks_per_second() end
 	return s
 end
 
@@ -111,9 +111,9 @@ end
 
 -- Called from the runner's loop
 function Bench:args6(a, b, c, d, e, f) return a end
-function Bench:ret_vector2() return Vector2(1, 2) end
-function Bench:ret_array() return Array({ 1, 2, 3 }) end
-function Bench:make_callable() return Callable(function(x) return x + 1 end) end
+function Bench:ret_vector2() return gd.Vector2(1, 2) end
+function Bench:ret_array() return gd.Array({ 1, 2, 3 }) end
+function Bench:make_callable() return gd.Callable(function(x) return x + 1 end) end
 function Bench:async_noop() return nil end
 
 -- VM
@@ -143,14 +143,14 @@ end
 function Bench:bench_api_vector2_new(n)
 	local s = 0
 	for i = 1, n do
-		local v = Vector2(i, 1)
+		local v = gd.Vector2(i, 1)
 		s += 1
 	end
 	return s
 end
 
 function Bench:bench_api_vector2_method(n)
-	local v = Vector2(3, 4)
+	local v = gd.Vector2(3, 4)
 	local s = 0.0
 	for i = 1, n do s += v:length() end
 	return s
@@ -158,7 +158,7 @@ end
 
 function Bench:bench_api_utility_fn(n)
 	local s = 0.0
-	for i = 1, n do s += lerp(0.0, 10.0, (i % 10) * 0.1) end
+	for i = 1, n do s += gd.lerp(0.0, 10.0, (i % 10) * 0.1) end
 	return s
 end
 
@@ -170,21 +170,21 @@ end
 
 function Bench:bench_api_constant(n)
 	local s = 0
-	for i = 1, n do s += Node.NOTIFICATION_READY end
+	for i = 1, n do s += gd.Node.NOTIFICATION_READY end
 	return s
 end
 
 function Bench:bench_api_new_object(n)
 	local s = 0
 	for i = 1, n do
-		local o = RefCounted.new()
+		local o = gd.RefCounted.new()
 		s += 1
 	end
 	return s
 end
 
 function Bench:bench_api_array_build(n)
-	local a = Array()
+	local a = gd.Array()
 	for i = 1, n do a:append(i) end
 	return a:size()
 end
@@ -202,7 +202,7 @@ function Bench:bench_api_array_iterate(arr)
 end
 
 function Bench:bench_api_dict_rw(n)
-	local d = Dictionary()
+	local d = gd.Dictionary()
 	for i = 1, n do d[i % 100] = i end
 	local s = 0
 	for i = 1, n do s += d[i % 100] end
@@ -222,7 +222,7 @@ function Bench:bench_api_signal_emit(n)
 end
 
 function Bench:bench_api_callable_call(n)
-	local cb = Callable(function(x) return x + 1 end)
+	local cb = gd.Callable(function(x) return x + 1 end)
 	local s = 0
 	for i = 1, n do s += cb(i) end
 	return s
@@ -325,7 +325,7 @@ end
 function Bench:bench_api_node_create(n)
 	local s = 0
 	for i = 1, n do
-		local node = Node.new()
+		local node = gd.Node.new()
 		node:free()
 		s += 1
 	end
@@ -333,22 +333,22 @@ function Bench:bench_api_node_create(n)
 end
 
 function Bench:bench_api_color_math(n)
-	local c = Color(0, 0, 0)
-	local step = Color(0.001, 0.002, 0.003)
+	local c = gd.Color(0, 0, 0)
+	local step = gd.Color(0.001, 0.002, 0.003)
 	for i = 1, n do c = c + step * 0.5 end
 	return math.round(c.r * 1000) / 1000
 end
 
 function Bench:bench_api_transform_xform(n)
-	local t = Transform2D(0.5, Vector2(10, 20))
+	local t = gd.Transform2D(0.5, gd.Vector2(10, 20))
 	local s = 0.0
-	for i = 1, n do s += (t * Vector2(1, 0)).x end
+	for i = 1, n do s += (t * gd.Vector2(1, 0)).x end
 	return math.round(s * 1000) / 1000
 end
 
 function Bench:bench_api_array_table_in(n)
 	local s = 0
-	for i = 1, n do s += Array({ 1, 2, 3 }):size() end
+	for i = 1, n do s += gd.Array({ 1, 2, 3 }):size() end
 	return s
 end
 
@@ -364,30 +364,30 @@ function Bench:_notification(what)
 end
 
 function Bench:bench_api_vector2_methods(n)
-	local v = Vector2(3, 4)
-	local w = Vector2(1, 2)
+	local v = gd.Vector2(3, 4)
+	local w = gd.Vector2(1, 2)
 	local s = 0.0
 	for i = 1, n do s += v:normalized():dot(w) + v:distance_to(w) end
 	return math.round(s * 1000) / 1000
 end
 
 function Bench:bench_api_vector3_math(n)
-	local v = Vector3(0, 0, 0)
-	local step = Vector3(1, 2, 3)
+	local v = gd.Vector3(0, 0, 0)
+	local step = gd.Vector3(1, 2, 3)
 	for i = 1, n do v = v + step * 0.5 end
 	return v.x
 end
 
 function Bench:bench_api_vector2i_math(n)
-	local a = Vector2i(0, 0)
-	local step = Vector2i(1, 2)
+	local a = gd.Vector2i(0, 0)
+	local step = gd.Vector2i(1, 2)
 	for i = 1, n do a = a + step end
 	return a.y
 end
 
 function Bench:bench_api_rect_has_point(n)
-	local r = Rect2(0, 0, 10, 10)
-	local p = Vector2(5, 5)
+	local r = gd.Rect2(0, 0, 10, 10)
+	local p = gd.Vector2(5, 5)
 	local s = 0
 	for i = 1, n do
 		if r:has_point(p) then s += 1 end
@@ -397,24 +397,24 @@ end
 
 function Bench:bench_api_builtin_static(n)
 	local s = 0.0
-	for i = 1, n do s += Vector2.from_angle(0.5).x end
+	for i = 1, n do s += gd.Vector2.from_angle(0.5).x end
 	return math.round(s * 1000) / 1000
 end
 
 function Bench:bench_api_utility_mix(n)
 	local s = 0.0
-	for i = 1, n do s += clampf(i % 20, 0, 10) + deg_to_rad(90) end
+	for i = 1, n do s += gd.clampf(i % 20, 0, 10) + gd.deg_to_rad(90) end
 	return math.round(s * 1000) / 1000
 end
 
 function Bench:bench_api_global_enum(n)
 	local s = 0
-	for i = 1, n do s += KEY_SPACE end
+	for i = 1, n do s += gd.KEY_SPACE end
 	return s
 end
 
 function Bench:bench_api_dict_iterate(n)
-	local d = Dictionary()
+	local d = gd.Dictionary()
 	for i = 1, 100 do d[i] = i end
 	local s = 0
 	for r = 1, n // 100 do
@@ -424,7 +424,7 @@ function Bench:bench_api_dict_iterate(n)
 end
 
 function Bench:bench_api_packed_float_array(n)
-	local a = PackedFloat32Array()
+	local a = gd.PackedFloat32Array()
 	for i = 1, n do a:append(i * 0.5) end
 	return a:size()
 end
@@ -438,9 +438,9 @@ function Bench:bench_api_string_godot_method(n)
 end
 
 function Bench:bench_api_transform3d_xform(n)
-	local t = Transform3D(Basis(Vector3(0, 1, 0), 0.5), Vector3(1, 2, 3))
+	local t = gd.Transform3D(gd.Basis(gd.Vector3(0, 1, 0), 0.5), gd.Vector3(1, 2, 3))
 	local s = 0.0
-	for i = 1, n do s += (t * Vector3(1, 0, 0)).x end
+	for i = 1, n do s += (t * gd.Vector3(1, 0, 0)).x end
 	return math.round(s * 1000) / 1000
 end
 
@@ -469,7 +469,7 @@ function Bench:bench_api_signal_emit_unconnected(n)
 end
 
 function Bench:bench_api_signal_connect(n)
-	local cb = Callable(self, "on_idle")
+	local cb = gd.Callable(self, "on_idle")
 	for i = 1, n do
 		self.idle:connect(cb)
 		self.idle:disconnect(cb)

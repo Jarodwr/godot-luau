@@ -36,11 +36,11 @@ public:
 	// extends names a class_name the global class list doesn't have yet (the
 	// editor's first scan registers classes in no particular order): the
 	// script registers with this base and loads once it's known (docs/adr/0049)
-	StringName pending_base;
 	StringName base_type = "RefCounted";
 	Ref<LuauScript> base_script;   // `extends = require("res://…")`
 	StringName global_name;        // `class_name`
 	bool tool = false;
+	bool fennel = false;           // a .fnl script: its language is Fennel
 	String icon_path;
 	int class_ref = LUA_NOREF;     // the table the script returned
 
@@ -52,8 +52,9 @@ public:
 		StringName class_name;              // for object types
 		PropertyHint hint = PROPERTY_HINT_NONE;
 		String hint_string;
-		Variant default_value;
+		Variant default_value;              // a function default: its value at load, for the editor
 		bool has_default = false;
+		int default_ref = LUA_NOREF;        // a function default, called for each instance (docs/adr/0060)
 		bool exported = false;              // shown in the inspector and saved
 		String category, group, subgroup;   // inspector sections (docs/adr/0051)
 		uint32_t header_usage = 0;          // a section header in `listed`, not a property
@@ -68,6 +69,7 @@ public:
 		StringName name;
 		Vector<StringName> args;
 		Vector<Variant::Type> arg_types;
+		Vector<StringName> arg_classes;  // an object argument's class (or class_name)
 	};
 	struct MethodDef {
 		StringName name;
@@ -141,7 +143,6 @@ public:
 	void _placeholder_erased(void *p_placeholder) override { placeholders.erase(p_placeholder); }
 	bool _can_instantiate() const override;
 	// Loads the script again if its base was pending and is known now
-	void retry_pending_base() const;
 	Ref<Script> _get_base_script() const override { return base_script; }
 	StringName _get_global_name() const override { return global_name; }
 	bool _inherits_script(const Ref<Script> &p_script) const override;
@@ -193,8 +194,16 @@ class LuauLanguage : public ScriptLanguageExtension {
 
 public:
 	static LuauLanguage *get_singleton() { return singleton; }
-	LuauLanguage() { singleton = this; }
-	~LuauLanguage() { singleton = nullptr; }
+	LuauLanguage() {
+		if (singleton == nullptr) {
+			singleton = this;
+		}
+	}
+	~LuauLanguage() {
+		if (singleton == this) {
+			singleton = nullptr;
+		}
+	}
 
 	String _get_name() const override { return "Luau"; }
 	void _init() override;
@@ -207,6 +216,8 @@ public:
 	PackedStringArray _get_doc_comment_delimiters() const override { return {}; }
 	PackedStringArray _get_string_delimiters() const override { return PackedStringArray({ "\" \"", "' '" }); }
 	Ref<Script> _make_template(const String &, const String &, const String &) const override;
+	// The source of a new .luau or .fnl script (bound, for tests)
+	static String template_source(const String &p_extension, const String &p_class_name, const String &p_base_class_name);
 	TypedArray<Dictionary> _get_built_in_templates(const StringName &) const override { return {}; }
 	bool _is_using_templates() override { return false; }
 	Dictionary _validate(const String &, const String &, bool, bool, bool, bool) const override;
@@ -246,7 +257,7 @@ public:
 	void _reload_all_scripts() override;
 	void _reload_scripts(const Array &p_scripts, bool p_soft_reload) override;
 	void _reload_tool_script(const Ref<Script> &p_script, bool p_soft_reload) override;
-	PackedStringArray _get_recognized_extensions() const override { return PackedStringArray({ "luau", "fnl" }); }
+	PackedStringArray _get_recognized_extensions() const override { return PackedStringArray({ "luau" }); }
 	TypedArray<Dictionary> _get_public_functions() const override { return {}; }
 	Dictionary _get_public_constants() const override { return {}; }
 	TypedArray<Dictionary> _get_public_annotations() const override { return {}; }
@@ -259,6 +270,38 @@ public:
 
 protected:
 	static void _bind_methods();
+};
+
+// Fennel, a second entry in Godot's language list so the editor creates and
+// comments .fnl scripts (docs/adr/0058). Its scripts are LuauScripts: the
+// Luau language runs them, registers their classes and watches their files.
+class FennelLanguage : public LuauLanguage {
+	GDCLASS(FennelLanguage, LuauLanguage);
+	static FennelLanguage *fennel_singleton;
+
+public:
+	static FennelLanguage *get_singleton() { return fennel_singleton; }
+	FennelLanguage() { fennel_singleton = this; }
+	~FennelLanguage() { fennel_singleton = nullptr; }
+
+	String _get_name() const override { return "Fennel"; }
+	// Godot wants each language's type to differ; nothing creates it, since
+	// the loader makes LuauScripts and only Luau handles global classes
+	String _get_type() const override { return "FennelScript"; }
+	String _get_extension() const override { return "fnl"; }
+	PackedStringArray _get_recognized_extensions() const override { return PackedStringArray({ "fnl" }); }
+	void _init() override {}
+	void _finish() override {}
+	void _frame() override {}
+	void _reload_all_scripts() override {}
+	PackedStringArray _get_reserved_words() const override;
+	PackedStringArray _get_comment_delimiters() const override { return PackedStringArray({ ";" }); }
+	PackedStringArray _get_string_delimiters() const override { return PackedStringArray({ "\" \"" }); }
+	Ref<Script> _make_template(const String &, const String &, const String &) const override;
+	bool _handles_global_class_type(const String &) const override { return false; }
+
+protected:
+	static void _bind_methods() {}
 };
 
 // What a call from Godot that suspended in await returns: Signal(this,
@@ -293,9 +336,16 @@ class LuauLoader : public ResourceFormatLoader {
 public:
 	PackedStringArray _get_recognized_extensions() const override { return PackedStringArray({ "luau", "fnl" }); }
 	bool _handles_type(const StringName &p_type) const override { return p_type == StringName("Script") || p_type == StringName("LuauScript"); }
+	// A dotfile isn't a script: .lsp.fnl holds fennel-ls settings (ADR 0061).
+	// Godot skips dotfiles on macOS and Linux, but on Windows, where hidden
+	// is a file attribute, the editor would load and run it.
+	bool _recognize_path(const String &p_path, const StringName &p_type) const override {
+		return !p_path.get_file().begins_with(".");
+	}
 	String _get_resource_type(const String &p_path) const override {
 		String extension = p_path.get_extension();
-		return extension == "luau" || extension == "fnl" ? "LuauScript" : "";
+		bool script = (extension == "luau" || extension == "fnl") && !p_path.get_file().begins_with(".");
+		return script ? "LuauScript" : "";
 	}
 	Variant _load(const String &p_path, const String &p_original_path, bool p_use_sub_threads, int32_t p_cache_mode) const override;
 

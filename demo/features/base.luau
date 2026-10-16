@@ -1,9 +1,9 @@
 -- Base of the feature checks: inherited properties, signals, methods,
 -- constants and overridable methods
 local Base = {
-	extends = "Node",
+	extends = gd.Node,
 	exports = {
-		health = { type = "int", default = 10, range = { 0, 100 } },
+		health = { type = gd.int, default = 10, range = { 0, 100 } },
 	},
 	signals = { "died" },
 }

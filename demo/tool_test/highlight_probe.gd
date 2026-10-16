@@ -13,13 +13,13 @@ func _ready() -> void:
 		var highlighter = editor.get_base_editor().syntax_highlighter if editor else null
 		print("HIGHLIGHT default ", path.get_file(), " ", highlighter.get_class() if highlighter else "none")
 		if highlighter and path.ends_with(".fnl"):
-			# The live editor knows it's Fennel: in (local T {:extends "Node"}),
+			# The live editor knows it's Fennel: in (local T {:extends gd.Node}),
 			# :extends (column 10) is a string, not ":" and a name as in Luau
 			var string_color: Color = EditorInterface.get_editor_settings().get_setting("text_editor/theme/highlighting/string_color")
 			var line0: Dictionary = highlighter.get_line_syntax_highlighting(0)
 			print("HIGHLIGHT live fennel keyword ", line0.has(10) and line0[10]["color"] == string_color)
 	var h = ClassDB.instantiate("LuauHighlighter")
-	var luau := "local x = 1 -- hi\nif x then print(x.y, v:len()) end\n--[[ a\nb ]] s = [==[\nlong]==] .. \"q\"\nlocal n: Node = Node.new(Vector2(1, 0x1F))"
+	var luau := "local x = 1 -- hi\nif x then print(x.y, v:len()) end\n--[[ a\nb ]] s = [==[\nlong]==] .. \"q\"\nlocal n: Node = gd.Node.new(gd.Vector2(1, 0x1F))"
 	print("HIGHLIGHT luau ", JSON.stringify(h.highlight_text(luau, false)))
-	var fennel := "; c\n(fn M.f [self] (if x :key \"s\n t\" 12))\n(Node.new)"
+	var fennel := "; c\n(fn M.f [self] (if x :key \"s\n t\" 12))\n(gd.Node.new) gd.Node\n(prop x 1)"
 	print("HIGHLIGHT fennel ", JSON.stringify(h.highlight_text(fennel, true)))

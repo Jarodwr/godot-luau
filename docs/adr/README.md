@@ -55,7 +55,7 @@ at the same optimisation level.
 | [0029](0029-builtin-method-pointers.md) | Cached method pointers for builtin values | Accepted |
 | [0030](0030-packed-vector2i-and-rid.md) | Vector2i and RID as packed light userdata; direct constructors | Accepted |
 | [0031](0031-elementwise-arithmetic-and-gc-tuning.md) | Elementwise arithmetic in C; garbage collector settings unchanged | Accepted |
-| [0032](0032-script-declarations.md) | Script features are declared in the class table | Accepted |
+| [0032](0032-script-declarations.md) | Script features are declared in the class table | Accepted; types amended by 0059 |
 | [0033](0033-lua-functions-as-callables.md) | Lua functions are Godot Callables | Accepted |
 | [0034](0034-script-inheritance-and-shutdown.md) | Script inheritance through required class tables; Lua closes with the main loop | Accepted |
 | [0035](0035-await-on-pooled-threads.md) | await: calls from Godot run on pooled threads | Accepted |
@@ -72,10 +72,17 @@ at the same optimisation level.
 | [0046](0046-frozen-shared-tables.md) | Shared libraries, type tables and metatables are frozen | Accepted |
 | [0047](0047-editor-validation.md) | The script editor validates Luau and Fennel | Accepted |
 | [0048](0048-type-definitions-for-luau-lsp.md) | Godot API definitions for luau-lsp | Accepted |
-| [0049](0049-extends-by-class-name.md) | `extends` takes a Luau class_name | Accepted |
+| [0049](0049-extends-by-class-name.md) | `extends` takes a Luau class_name | Superseded by 0056 |
 | [0050](0050-saving-scripts-from-the-editor.md) | Scripts saved in Godot's editor reload in place | Accepted |
 | [0051](0051-export-sections.md) | Exports in inspector categories, groups and subgroups | Accepted |
 | [0052](0052-postinitialize-after-construction.md) | Objects made with ClassName.new() get NOTIFICATION_POSTINITIALIZE | Accepted |
 | [0053](0053-script-editor-highlighting.md) | A syntax highlighter for Luau and Fennel in the script editor | Accepted |
 | [0054](0054-builds-for-every-platform.md) | Builds and tests for every platform in CI | Accepted |
 | [0055](0055-faster-object-construction.md) | `ClassName.new()` without per-call lookups | Accepted |
+| [0056](0056-godot-api-under-gd.md) | The Godot API is under `gd`; `extends` takes a table | Accepted |
+| [0057](0057-defnode-macro.md) | `defnode`: Fennel scripts declared one member at a time | Accepted |
+| [0058](0058-fennel-as-an-editor-language.md) | Fennel is its own language in the editor | Accepted |
+| [0059](0059-declared-types-are-gd-values.md) | Declared types are `gd` values | Accepted |
+| [0060](0060-per-instance-defaults.md) | Defaults are evaluated for each instance | Accepted |
+| [0061](0061-fennel-ls-settings.md) | fennel-ls settings ship with the addon | Accepted |
+| [0062](0062-import-macros-from-res.md) | `import-macros` reads macro files from `res://` | Accepted |

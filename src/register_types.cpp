@@ -11,6 +11,7 @@
 using namespace godot;
 
 static luau::LuauLanguage *language = nullptr;
+static luau::FennelLanguage *fennel_language = nullptr;
 static Ref<luau::LuauLoader> loader;
 static Ref<luau::LuauSaver> saver;
 
@@ -27,11 +28,14 @@ static void initialize(ModuleInitializationLevel level) {
 	}
 	GDREGISTER_CLASS(luau::LuauScript);
 	GDREGISTER_CLASS(luau::LuauLanguage);
+	GDREGISTER_CLASS(luau::FennelLanguage);
 	GDREGISTER_CLASS(luau::LuauLoader);
 	GDREGISTER_CLASS(luau::LuauSaver);
 	GDREGISTER_INTERNAL_CLASS(luau::LuauCompletion);
 	language = memnew(luau::LuauLanguage);
 	Engine::get_singleton()->register_script_language(language);
+	fennel_language = memnew(luau::FennelLanguage);
+	Engine::get_singleton()->register_script_language(fennel_language);
 	loader.instantiate();
 	ResourceLoader::get_singleton()->add_resource_format_loader(loader);
 	saver.instantiate();
@@ -50,6 +54,9 @@ static void uninitialize(ModuleInitializationLevel level) {
 	loader.unref();
 	ResourceSaver::get_singleton()->remove_resource_format_saver(saver);
 	saver.unref();
+	Engine::get_singleton()->unregister_script_language(fennel_language);
+	memdelete(fennel_language);
+	fennel_language = nullptr;
 	Engine::get_singleton()->unregister_script_language(language);
 	memdelete(language);
 	language = nullptr;

@@ -45,15 +45,17 @@ file(GLOB SOURCES CONFIGURE_DEPENDS src/*.cpp)
 add_library(godot_luau SHARED ${SOURCES} "${API_DATA}")
 target_include_directories(godot_luau PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/gen")
 
-# Luau definitions of Godot's API for luau-lsp, next to the library (docs/adr/0048)
+# Luau definitions of Godot's API for luau-lsp, next to the library (docs/adr/0048),
+# and fennel-ls's hover and completion entries for gd (docs/adr/0061)
 set(DEFINITIONS "${CMAKE_CURRENT_SOURCE_DIR}/addons/godot_luau/types/godot.d.luau")
+set(FENNEL_DOCS "${CMAKE_CURRENT_SOURCE_DIR}/addons/godot_luau/types/gd_docs.fnl")
 add_custom_command(
-    OUTPUT "${DEFINITIONS}"
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_definitions.py" "${API_JSON}" "${DEFINITIONS}"
+    OUTPUT "${DEFINITIONS}" "${FENNEL_DOCS}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_definitions.py" "${API_JSON}" "${DEFINITIONS}" "${FENNEL_DOCS}"
     DEPENDS "${API_JSON}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_definitions.py"
-    COMMENT "Generating godot.d.luau"
+    COMMENT "Generating godot.d.luau and gd_docs.fnl"
 )
-add_custom_target(godot_luau_definitions ALL DEPENDS "${DEFINITIONS}")
+add_custom_target(godot_luau_definitions ALL DEPENDS "${DEFINITIONS}" "${FENNEL_DOCS}")
 target_link_libraries(godot_luau PRIVATE godot::cpp Luau.VM Luau.Compiler)
 
 # Native code generation for script functions (docs/adr/0009)

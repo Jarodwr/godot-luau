@@ -1,0 +1,77 @@
+;; fennel-ls settings for a godot-luau project (docs/adr/0061). A project's
+;; .lsp.fnl requires this file:
+;;
+;;   (require :addons.godot_luau.lsp)
+;;
+;; It's .fnlm, as macros.fnlm is, so Godot doesn't load it as a script.
+;; Hover and completion for gd come from types/gd_docs.fnl, generated with
+;; godot.d.luau; Godot ignores types/.
+;;
+;; The hook tells fennel-ls what defnode's body means (docs/adr/0057): which
+;; parts are code to check (a base, a prop's default and map, a signal
+;; argument's type, a method), and which are names (a prop, a signal and its
+;; arguments, an alias). A method's self is implicit, and in (super name …)
+;; the name is the base's method rather than a variable.
+
+(local sections {:category true :group true :subgroup true})
+
+(fn head [node]
+  (and (= node.kind :list)
+       (. node.children 1)
+       (. node.children 1 :value)))
+
+(fn at [path i]
+  (doto (icollect [_ v (ipairs path)] v)
+    (table.insert i)))
+
+;; (super name args…) anywhere in a method: skip super and the name
+(fn skip-super-names [node out]
+  (when (= (head node) :super)
+    (each [i (ipairs [1 2])]
+      (let [child (. node.children i)]
+        (when child
+          (table.insert out {:type :skip :span child.span})))))
+  (each [_ child (ipairs (or node.children []))]
+    (skip-super-names child out)))
+
+(fn body-form [node path out]
+  (let [kind (head node)]
+    (if (= kind :prop)
+        (for [i 3 4]
+          (when (. node.children i)
+            (table.insert out {:type :analyze :path (at path i)})))
+        (. sections kind)
+        (for [i 3 (length node.children)]
+          (body-form (. node.children i) (at path i) out))
+        (= kind :signal)
+        (for [i 3 (length node.children)]
+          (let [arg (. node.children i)]
+            (when (and (= arg.kind :seq) (= 2 (length arg.children)))
+              (table.insert out {:type :analyze :path (at (at path i) 2)}))))
+        (= kind :method)
+        (do
+          (skip-super-names node out)
+          (table.insert out {:type :analyze-fn :path path :implicit-params [:self]})))))
+
+;; (defnode Name Base :option value … body…)
+(fn defnode [call]
+  (let [children call.children
+        out [{:type :scope-open :span call.span}]]
+    (when (. children 3)
+      (table.insert out {:type :analyze :index 3}))
+    (var i 4)
+    (while (and (. children i) (= (. children i :kind) :keyword))
+      (when (. children (+ i 1))
+        (table.insert out {:type :analyze :index (+ i 1)}))
+      (set i (+ i 2)))
+    (for [j i (length children)]
+      (body-form (. children j) [j] out))
+    (table.insert out {:type :scope-close})
+    out))
+
+(local (has-docs docs) (pcall require :addons.godot_luau.types.gd_docs))
+
+{:platform :luau
+ :known-globals [:gd :await :spawn]
+ :global-docs (if has-docs docs nil)
+ :global-macros {: defnode :deftool defnode}}

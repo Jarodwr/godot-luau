@@ -131,6 +131,9 @@ struct BuiltinType {
 };
 
 const BuiltinType BUILTIN_TYPES[] = {
+	// Lua's own values; on gd for declared types (docs/adr/0059) and as
+	// conversions (gd.int("12"))
+	{ "bool", Variant::BOOL }, { "int", Variant::INT }, { "float", Variant::FLOAT }, { "String", Variant::STRING },
 	{ "Vector2", Variant::VECTOR2 }, { "Vector2i", Variant::VECTOR2I }, { "Rect2", Variant::RECT2 },
 	{ "Rect2i", Variant::RECT2I }, { "Vector3", Variant::VECTOR3 }, { "Vector3i", Variant::VECTOR3I },
 	{ "Transform2D", Variant::TRANSFORM2D }, { "Vector4", Variant::VECTOR4 }, { "Vector4i", Variant::VECTOR4I },
@@ -1112,7 +1115,9 @@ static int builtin_type_index(lua_State *L) {
 	return 1;
 }
 
+// The type tables, as gd.Vector2, gd.Color… (docs/adr/0056)
 static void register_builtin_types(lua_State *L) {
+	lua_getglobal(L, "gd");
 	for (const BuiltinType &t : BUILTIN_TYPES) {
 		lua_newtable(L);  // the type table
 		lua_newtable(L);  // its metatable
@@ -1128,8 +1133,9 @@ static void register_builtin_types(lua_State *L) {
 		lua_pushcclosurek(L, builtin_type_index, "__index", 1, nullptr);
 		lua_setfield(L, -2, "__index");
 		lua_setmetatable(L, -2);
-		lua_setglobal(L, t.name);
+		lua_setfield(L, -2, t.name);
 	}
+	lua_pop(L, 1);
 }
 
 // ---------------------------------------------------------------- vector methods (ADR 0025, 0044)
@@ -1678,6 +1684,37 @@ static int class_table_index(lua_State *L) {
 	return 1;
 }
 
+// The class of an engine class table (extends = gd.Node2D), or null
+ClassInfo *class_table_info(lua_State *L, int index) {
+	if (!lua_istable(L, index) || !lua_getmetatable(L, index)) {
+		return nullptr;
+	}
+	lua_rawgetfield(L, -1, "__index");
+	ClassInfo *cls = nullptr;
+	if (lua_tocfunction(L, -1) == class_table_index) {
+		lua_getupvalue(L, -1, 1);
+		cls = (ClassInfo *)lua_tolightuserdata(L, -1);
+		lua_pop(L, 1);
+	}
+	lua_pop(L, 2);
+	return cls;
+}
+
+bool builtin_type_table(lua_State *L, int index, Variant::Type &r_type) {
+	if (!lua_istable(L, index) || !lua_getmetatable(L, index)) {
+		return false;
+	}
+	lua_rawgetfield(L, -1, "__index");
+	bool found = lua_tocfunction(L, -1) == builtin_type_index;
+	if (found) {
+		lua_getupvalue(L, -1, 1);
+		r_type = (Variant::Type)lua_tointeger(L, -1);
+		lua_pop(L, 1);
+	}
+	lua_pop(L, 2);
+	return found;
+}
+
 void push_class_table(lua_State *L, ClassInfo *cls) {
 	lua_newtable(L);
 	lua_pushlightuserdata(L, cls);
@@ -1694,6 +1731,10 @@ void push_class_table(lua_State *L, ClassInfo *cls) {
 // ---------------------------------------------------------------- globals: utilities and enums
 
 bool push_builtin_global(lua_State *L, const char *name) {
+	if (strcmp(name, "is_instance_valid") == 0) {
+		lua_pushcfunction(L, is_instance_valid, "is_instance_valid");
+		return true;
+	}
 	if (const UtilityInfo *info = find_utility(name)) {
 		size_t index = (size_t)(info - UTILITIES);
 		if (utility_pointers[index] == nullptr) {

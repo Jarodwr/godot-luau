@@ -762,6 +762,26 @@ static ObjectBox *checked_box(lua_State *L, int index) {
 	return box;
 }
 
+// gd.is_instance_valid(value): whether it's an object that still exists. A
+// freed object is false, as in GDScript, where any other use of it raises
+// (docs/adr/0013), so it isn't converted as an argument would be.
+int is_instance_valid(lua_State *L) {
+	switch (lua_type(L, 1)) {
+		case LUA_TUSERDATA:
+			if (ObjectBox *box = (ObjectBox *)lua_touserdatatagged(L, 1, TAG_OBJECT)) {
+				lua_pushboolean(L, !box->can_be_freed || gdextension_interface::object_get_instance_from_id(box->id) == box->object);
+				return 1;
+			}
+			break;  // Variant userdata never holds an object: objects are boxes
+		case LUA_TTABLE:
+			// a script's self table loses its owner when the object is freed
+			lua_pushboolean(L, self_table_owner(L, 1) != nullptr);
+			return 1;
+	}
+	lua_pushboolean(L, false);
+	return 1;
+}
+
 static GDExtensionObjectPtr checked_object(lua_State *L, int index) {
 	ObjectBox *box = checked_box(L, index);
 	return box ? box->object : nullptr;
@@ -1561,10 +1581,13 @@ static int string_length(lua_State *L) {
 }
 
 
-// Globals not defined by scripts: engine singletons (Engine, OS, Input…)
-static int globals_index(lua_State *L) {
+// gd's members not made up front: engine singletons (gd.Engine, gd.Input…),
+// classes, utilities and global enums (docs/adr/0056), resolved on first use.
+// Anything else is an error, so gd.Nod2D fails where it's read rather than
+// as a nil later (a function's imports that fail at load are retried when run)
+static int gd_index(lua_State *L) {
 	if (lua_type(L, 2) != LUA_TSTRING) {
-		return 0;
+		luaL_error(L, "gd has no member %s", luaL_typename(L, 2));
 	}
 	StringName name = string_name_at(L, 2);
 	if (Engine::get_singleton()->has_singleton(name)) {
@@ -1572,11 +1595,11 @@ static int globals_index(lua_State *L) {
 	} else if (ClassDB::class_exists(name)) {
 		push_class_table(L, class_info(name));  // `new` and constants
 	} else if (!push_builtin_global(L, lua_tostring(L, 2))) {  // utilities, global enums
-		return 0;
+		luaL_error(L, "gd has no member '%s'", lua_tostring(L, 2));
 	}
 	lua_pushvalue(L, 2);
 	lua_pushvalue(L, -2);
-	lua_rawset(L, 1);  // cache
+	rawset_cache(L, 1);
 	return 1;
 }
 
@@ -1631,14 +1654,15 @@ void register_globals(lua_State *L) {
 	lua_setfield(L, -2, "format");
 	lua_pop(L, 1);
 
-	register_builtins(L);
-
-	lua_pushvalue(L, LUA_GLOBALSINDEX);
+	// The Godot API, under one global (docs/adr/0056)
 	lua_newtable(L);
-	lua_pushcfunction(L, globals_index, "__index");
+	lua_newtable(L);
+	lua_pushcfunction(L, gd_index, "__index");
 	lua_setfield(L, -2, "__index");
 	lua_setmetatable(L, -2);
-	lua_pop(L, 1);
+	lua_setglobal(L, "gd");
+
+	register_builtins(L);
 }
 
 // loadstring(code, chunkname?): Luau compiles source only through its
@@ -1659,13 +1683,14 @@ static int loadstring(lua_State *L) {
 	return 1;
 }
 
-// Scripts (and Fennel's output) compile with inlining and with `Vector2(x, y)`
-// recognised as a vector constructor (docs/adr/0008)
+// Scripts (and Fennel's output) compile with inlining and with
+// `gd.Vector2(x, y)` recognised as a vector constructor (docs/adr/0008, 0056)
 static lua_CompileOptions *compile_options() {
 	static lua_CompileOptions options = [] {
 		lua_CompileOptions o = {};
 		o.optimizationLevel = 2;
 		o.debugLevel = 1;
+		o.vectorLib = "gd";
 		o.vectorCtor = "Vector2";
 		o.vectorCtorArgs = 2;  // other argument counts reach vector2_construct (docs/adr/0045)
 		return o;
@@ -1714,6 +1739,134 @@ function require(name)
 end
 )";
 
+// defnode and deftool (docs/adr/0057): macros.fnlm evaluated as a macro
+// module, its macros added to Fennel's global scope (a new scope's parent),
+// where they're built in like Fennel's own: every file has them, and their
+// errors come without Fennel's macro traceback
+static const char *INSTALL_MACROS = R"(
+local fennel, source, filename = ...
+local macros = fennel.eval(source, { env = "_COMPILER", filename = filename })
+local global = fennel.scope().parent
+for name, macro in pairs(macros) do global.macros[name] = macro end
+)";
+
+static void load_fennel_macros(lua_State *L) {
+	const char *path = "res://addons/godot_luau/macros.fnlm";
+	String source = FileAccess::get_file_as_string(path);
+	if (source.is_empty()) {
+		UtilityFunctions::push_error("Fennel's defnode isn't available: " + String(path) + " is missing");
+		return;
+	}
+	if (!load_chunk(L, INSTALL_MACROS, "=fennel macros")) {
+		lua_pop(L, 1);
+		return;
+	}
+	lua_rawgetfield(L, LUA_REGISTRYINDEX, "luau.fennel");
+	CharString code = source.utf8();
+	lua_pushlstring(L, code.get_data(), code.length());
+	lua_pushstring(L, path);
+	if (lua_pcall(L, 3, 0, 0) != LUA_OK) {
+		UtilityFunctions::push_error("Loading " + String(path) + ": " + String::utf8(lua_tostring(L, -1)));
+		lua_pop(L, 1);
+	}
+}
+
+// A macro module for import-macros (Fennel reads them with io, which Luau
+// doesn't have): read(name, from) → its source and path, or nothing. Names
+// are as require's: "res://a/b", "./b" or "../b" (relative to the importing
+// file, `from`), or "a.b" (from res://), with .fnlm or .fnl. A .fnlm isn't
+// a script, so Godot doesn't load it as one.
+static int read_macro_module(lua_State *L) {
+	String name = String::utf8(luaL_checkstring(L, 1));
+	String from = lua_isstring(L, 2) ? String::utf8(lua_tostring(L, 2)) : String();
+	String base;
+	if (name.begins_with("res://")) {
+		base = name;
+	} else if (name.begins_with("./") || name.begins_with("../")) {
+		if (!from.begins_with("res://")) {
+			return 0;
+		}
+		base = from.get_base_dir().path_join(name).simplify_path();
+	} else {
+		base = "res://" + name.replace(".", "/");
+	}
+	String path;
+	String ext = base.get_extension();
+	if ((ext == "fnlm" || ext == "fnl") && FileAccess::file_exists(base)) {
+		path = base;
+	} else {
+		for (const char *candidate : { ".fnlm", ".fnl" }) {
+			if (FileAccess::file_exists(base + candidate)) {
+				path = base + candidate;
+				break;
+			}
+		}
+	}
+	if (path.is_empty()) {
+		return 0;
+	}
+	CharString code = FileAccess::get_file_as_string(path).utf8();
+	lua_pushlstring(L, code.get_data(), code.length());
+	push_string(L, path);
+	return 2;
+}
+
+// import-macros from res:// (docs/adr/0062). A searcher replaces Fennel's
+// own, which open files with io, and reads the file; the stack of files
+// being compiled resolves ./ names.
+// Fennel caches macro modules by name, so each compile starts without the
+// ones the last compile loaded: an edited macro file takes effect at the
+// next compile. Returns begin(path), called before a compile, and used(),
+// the macro files the compile read.
+static const char *MACRO_SEARCHER = R"(
+local fennel, read = ...
+local loaded = fennel["macro-loaded"]
+local files = {}
+local used = {}
+local searchers = fennel["macro-searchers"]
+for i = #searchers, 1, -1 do table.remove(searchers, i) end
+table.insert(searchers, function(name)
+	local source, path = read(name, files[#files])
+	if source == nil then return nil end
+	return function()
+		used[name] = path
+		table.insert(files, path)
+		-- ... is the name and path, as Fennel gives a macro module
+		local ok, macros = pcall(fennel.eval, source, { env = "_COMPILER", filename = path, ["module-name"] = name }, name, path)
+		table.remove(files)
+		if not ok then error(macros, 0) end
+		return macros
+	end, path
+end)
+local function begin(path)
+	for name in pairs(used) do loaded[name] = nil end
+	used = {}
+	files = { path }
+end
+local function macro_files()
+	local paths = {}
+	for _, path in pairs(used) do table.insert(paths, path) end
+	return paths
+end
+return begin, macro_files
+)";
+
+static void install_macro_searcher(lua_State *L) {
+	if (!load_chunk(L, MACRO_SEARCHER, "=fennel macro searcher")) {
+		lua_pop(L, 1);
+		return;
+	}
+	lua_rawgetfield(L, LUA_REGISTRYINDEX, "luau.fennel");
+	lua_pushcfunction(L, read_macro_module, "read_macro_module");
+	if (lua_pcall(L, 2, 2, 0) != LUA_OK) {
+		UtilityFunctions::push_error("Fennel's import-macros: " + String::utf8(lua_tostring(L, -1)));
+		lua_pop(L, 1);
+		return;
+	}
+	lua_rawsetfield(L, LUA_REGISTRYINDEX, "luau.fennel_macro_files");
+	lua_rawsetfield(L, LUA_REGISTRYINDEX, "luau.fennel_begin");
+}
+
 static void load_fennel(lua_State *L) {
 	String source = FileAccess::get_file_as_string("res://addons/godot_luau/fennel.lua");
 	if (source.is_empty()) {
@@ -1730,6 +1883,8 @@ static void load_fennel(lua_State *L) {
 	lua_setfield(L, -2, "fennel");
 	lua_pop(L, 2);
 	lua_rawsetfield(L, LUA_REGISTRYINDEX, "luau.fennel");
+	load_fennel_macros(L);
+	install_macro_searcher(L);
 }
 
 bool compile_fennel(lua_State *L, const String &source, const String &path, String &r_lua) {
@@ -1741,6 +1896,13 @@ bool compile_fennel(lua_State *L, const String &source, const String &path, Stri
 	}
 	lua_getfield(L, -1, "compileString");
 	lua_remove(L, -2);
+	lua_rawgetfield(L, LUA_REGISTRYINDEX, "luau.fennel_begin");
+	if (lua_isfunction(L, -1)) {
+		push_string(L, path);
+		lua_call(L, 1, 0);
+	} else {
+		lua_pop(L, 1);
+	}
 	CharString code = source.utf8();
 	lua_pushlstring(L, code.get_data(), code.length());
 	lua_newtable(L);
@@ -1756,6 +1918,16 @@ bool compile_fennel(lua_State *L, const String &source, const String &path, Stri
 	size_t length;
 	const char *s = lua_tolstring(L, -1, &length);
 	r_lua = s ? String::utf8(s, (int)length) : String("Fennel error");
+	lua_pop(L, 1);
+	// The script compiles again when a macro file it used changes
+	lua_rawgetfield(L, LUA_REGISTRYINDEX, "luau.fennel_macro_files");
+	if (lua_isfunction(L, -1) && lua_pcall(L, 0, 1, 0) == LUA_OK) {
+		for (int i = 1; lua_rawgeti(L, -1, i) == LUA_TSTRING; i++) {
+			note_macro_use(String::utf8(lua_tostring(L, -1)), path);
+			lua_pop(L, 1);
+		}
+		lua_pop(L, 1);
+	}
 	lua_pop(L, 1);
 	return ok;
 }
@@ -1782,8 +1954,8 @@ void freeze_table(lua_State *L, int index) {
 
 // Makes everything scripts share read-only (docs/adr/0046): the libraries
 // and type tables in the globals, and the metatables of strings, vectors,
-// packed values, Objects, Variants and the globals. The globals table itself
-// stays writable (scripts' own globals, cached engine classes), and so does
+// packed values, Objects and Variants, and `gd` (whose __index still caches).
+// The globals table itself stays writable (scripts' own globals), and so does
 // `package`, whose `loaded` fills as modules load.
 static void freeze_shared_tables(lua_State *L) {
 	lua_pushnil(L);
@@ -1814,10 +1986,6 @@ static void freeze_shared_tables(lua_State *L) {
 		if (lua_istable(L, -1)) {
 			freeze_table(L, -1);
 		}
-		lua_pop(L, 1);
-	}
-	if (lua_getmetatable(L, LUA_GLOBALSINDEX)) {
-		freeze_table(L, -1);
 		lua_pop(L, 1);
 	}
 }
@@ -1869,6 +2037,9 @@ Variant coerce_to_type(const Variant &value, Variant::Type type) {
 	}
 	if (have == Variant::FLOAT && type == Variant::INT) {
 		return (int64_t)(double)value;
+	}
+	if (have == Variant::ARRAY && type == Variant::DICTIONARY && ((Array)value).is_empty()) {
+		return Dictionary();  // an empty table is read as an Array
 	}
 	if (have == Variant::VECTOR2 && type == Variant::VECTOR3) {
 		Vector2 v = value;

@@ -1,6 +1,6 @@
 # 0032. Script features are declared in the class table
 
-- **Status:** Accepted
+- **Status:** Accepted; types amended by [0059](0059-declared-types-are-gd-values.md), declarations and defaults by [0060](0060-per-instance-defaults.md)
 - **Date:** 2026-10-04
 
 ## Context

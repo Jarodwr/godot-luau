@@ -110,11 +110,14 @@ cd demo && "$GODOT_BIN" --headless --path . --script checks.gd
 ## Scripts
 
 A script is a chunk returning a table; functions in it are methods. `.luau`
-and `.fnl` (compiled by Fennel running inside Luau) are both loaded.
+and `.fnl` (compiled by Fennel running inside Luau) are both loaded. The
+Godot API is under `gd`: classes, singletons, built-in types, utility
+functions and enum values (`gd.Node2D`, `gd.Input`, `gd.Vector2`, `gd.lerp`,
+`gd.KEY_SPACE`) ([0056](docs/adr/0056-godot-api-under-gd.md)).
 
 ```lua
-local Mover = { extends = "Node2D" }
-function Mover:_ready() self.velocity = Vector2(1, 0.5) end
+local Mover = { extends = gd.Node2D }
+function Mover:_ready() self.velocity = gd.Vector2(1, 0.5) end
 function Mover:_process(delta)
 	self.position = self.position + self.velocity * delta
 end
@@ -122,11 +125,40 @@ return Mover
 ```
 
 ```fennel
-(local Mover {:extends "Node2D"})
-(fn Mover._ready [self] (set self.velocity (Vector2 1 0.5)))
-(fn Mover._process [self delta]
-  (set self.position (+ self.position (* self.velocity delta))))
-Mover
+(defnode Mover gd.Node2D
+  (method _ready [] (set self.velocity (gd.Vector2 1 0.5)))
+  (method _process [delta]
+    (set self.position (+ self.position (* self.velocity delta)))))
+```
+
+In Fennel, `defnode` (and `deftool` for tool scripts) declares a script one
+member at a time ([0057](docs/adr/0057-defnode-macro.md)):
+
+- the symbol is the `class_name` (`:global false` opts out);
+- `self` is implicit in methods, and `(super m …)` calls the base script's
+  version;
+- `(prop x 1)` is a property, and a trailing map exports it with its
+  metadata: `(prop health 500 {:range [0 1000]})`;
+- `(group Combat (prop health 500) …)` puts props in an inspector section
+  (`category` and `subgroup` too). Everything in a section is exported;
+- `(signal hit [damage gd.int] by)` declares a signal: each argument is a name, or `[name type]`;
+- `(alias label "HUD/Label")` names a child node, looked up on first use
+  (GDScript's `@onready var label = $HUD/Label`).
+
+The macro builds the same table as the Luau form below, so it's syntax only.
+
+```fennel
+(local Enemy (require :res://enemy))
+
+(defnode Boss Enemy
+  (prop speed 120.0 {})
+  (group Combat
+    (prop health 500 {:type gd.int :range [0 1000]}))
+  (prop phase 1)
+  (signal hit [damage gd.int])
+  (method take [damage]
+    (super take damage)
+    (when (< self.health 100) (self.hit:emit damage))))
 ```
 
 Exports, properties, signals, defaults, types, inheritance and constants are
@@ -137,14 +169,16 @@ declared in the same table
 ```lua
 local Enemy = require("res://enemy.luau")
 local Boss = {
-	extends = Enemy,                 -- a required script, a native class or a Luau class_name
+	extends = Enemy,                 -- a required script, or an engine class (gd.Node2D)
 	class_name = "Boss",
 	exports = {
-		speed = 120.0,
-		health = { type = "int", default = 500, range = { 0, 1000 }, group = "Combat" },  -- an inspector group
+		speed = { default = 120.0 },     -- typed by its default
+		target = { type = gd.Node2D },   -- a type: gd values, or a required script (ADR 0059)
+		health = { type = gd.int, default = 500, range = { 0, 1000 }, group = "Combat" },  -- an inspector group
+		loot = { default = function() return {} end },  -- a new one for each instance
 	},
-	properties = { phase = { type = "int", default = 1 } },
-	signals = { "enraged", hit = { "damage: int" } },
+	properties = { phase = { type = gd.int, default = 1 } },
+	signals = { "enraged", hit = { "damage", gd.int } },
 }
 Boss.MAX_PHASE = 3
 
@@ -162,6 +196,12 @@ end
 return Boss
 ```
 
+A function default is called for each new instance, as GDScript runs
+`var loot = []` for each; any other default must be a value no instance can
+change for another, so a table or object default is an error. Fennel's
+`prop` writes the function itself
+([0060](docs/adr/0060-per-instance-defaults.md)).
+
 `require` loads `.luau` and `.fnl` files by path (`res://lib/util` or `@res/lib/util`,
 `./util`, `../util`) or dotted name (`lib.util`). Saving a script while the
 game runs reloads it in place: instances keep their fields, and scripts that
@@ -171,6 +211,12 @@ required it reload too
 ```sh
 cd demo && "$GODOT_BIN" --headless --path . --script hot_reload.gd
 ```
+
+Fennel's `import-macros` loads macro files the same way, `.fnlm` (which
+Godot doesn't load as a script) or `.fnl`:
+`(import-macros {: on} :lib.bus-macros)` or `"./macros"`. A changed macro
+file compiles the scripts that import it again
+([0062](docs/adr/0062-import-macros-from-res.md)).
 
 Script errors are reported like GDScript's, with file, line and a Luau
 backtrace ([0037](docs/adr/0037-script-errors.md));
@@ -183,6 +229,9 @@ tool scripts in the editor, and inspector placeholders.
 Godot's script editor highlights `.luau` and `.fnl` files
 ([0053](docs/adr/0053-script-editor-highlighting.md)) and underlines syntax
 and compile errors as you type ([0047](docs/adr/0047-editor-validation.md)).
+The New Script dialog lists Luau and Fennel; a new Fennel script is a
+`defnode` named after its file
+([0058](docs/adr/0058-fennel-as-an-editor-language.md)).
 
 For completion, hover and type checking in an external editor, use
 [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp) with the Godot API
@@ -205,6 +254,21 @@ And a `.luaurc` at the project root, so `require("@res/…")` (the same as
 { "aliases": { "res": "." } }
 ```
 
+For Fennel, use [fennel-ls-rs](https://github.com/Jarodwr/fennel-tools)
+0.2.2 or later (`brew install jarodwr/tap/fennel-ls-rs`) with the addon's
+settings. A `.lsp.fnl` at the project root:
+
+```fennel
+(require :addons.godot_luau.lsp)
+```
+
+It understands `defnode`: defaults, signal types and method bodies are
+checked, member names aren't reported as unknown, and `self` is a method's
+parameter. `gd` has hover and completion for its classes, constructors,
+constants and functions
+([0061](docs/adr/0061-fennel-ls-settings.md)). `tools/check_lsp.sh` checks
+them with `fennel-ls check`.
+
 Untyped scripts get completion and checks on the API. In `--!strict` mode,
 type `self` with one line ([example](demo/types/typed_mover.luau)), and give
 exports their sections per property (`speed = { default = 1, group =
@@ -215,6 +279,8 @@ shape, so header entries such as `{ group = "Movement" }` don't type-check.
 type Mover = Node2D & typeof(Mover) & { velocity: Vector2 }
 function Mover._process(self: Mover, delta: number) … end
 ```
+
+Type names stay top-level (`Node2D`, `Vector2`); their values are on `gd`.
 
 `LUAU_LSP=… tools/check_types.sh` checks the definitions.
 
@@ -243,7 +309,8 @@ function Mover._process(self: Mover, delta: number) … end
   - Fields are plain entries.
   - Its metatable sends misses to a per-instance cache of script functions and
     engine method binds, then to the engine.
-- `LuauScript`, `LuauLanguage`, the `.luau`/`.fnl` loader, and
+- `LuauScript`, `LuauLanguage` (and `FennelLanguage`, its entry for `.fnl`
+  in the editor), the `.luau`/`.fnl` loader, and
   `script.new()`.
 
 ## Decisions

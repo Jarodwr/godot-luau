@@ -22,9 +22,9 @@ func _initialize() -> void:
 	check(typed.describe() == "base+derived", "a variable typed with the class")
 	n.free()
 
-	# A Luau class extending another by its class_name (ADR 0049)
+	# A Luau class extending a Luau class_name through require (ADR 0056)
 	var b = LuauByName.new()
-	check(b is LuauFeatures and b is LuauByName, "extends = \"LuauFeatures\": is both classes")
+	check(b is LuauFeatures and b is LuauByName, "extends = require(…) of a class_name: is both classes")
 	check(b.describe() == "by name+base+derived", "an override calls the named base's method (%s)" % b.describe())
 	check(b.speed == 2.5 and LuauByName.make(2) == 6, "inherits the named base's exports and statics")
 	# Reloading the named base (in memory, the file stays) updates the derived class
